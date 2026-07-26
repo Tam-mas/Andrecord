@@ -1,5 +1,12 @@
 # Changelog
 
+### [2026-07-26 20:55] Fixed
+
+**Tech:** `app/src/main/java/com/andrecord/app/ui/AndrecordApp.kt` — clear `selectedSessionId` on delete
+**Dev:** `onDeleted` previously called `navigator.navigateBack()` without also resetting `selectedSessionId` to `null`. Invisible in single-pane mode (the pane switch hides the stale composable), but in two-pane (unfolded) mode the detail pane would keep trying to render the just-deleted session's id until another session was selected.
+**Plain:** Fixed a rare case where, on the unfolded/two-pane layout, deleting a session could leave a blank detail pane instead of clearing it.
+**Why:** Foldable support is the whole point of this layout — didn't want the one navigation edge case that only shows up in two-pane mode to slip through untested.
+
 ### [2026-07-26 20:40] Added
 
 **Tech:** `app/src/main/java/com/andrecord/app/ui/AndrecordApp.kt`, `app/src/main/java/com/andrecord/app/MainActivity.kt` — adaptive list-detail navigation root and app entry point, wiring together every screen and system built in Tasks 1-16

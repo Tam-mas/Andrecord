@@ -51,7 +51,10 @@ fun AndrecordApp(container: AppContainer) {
                     val detailViewModel = viewModel(key = id) { SessionDetailViewModel(container.sessionRepository, id) }
                     SessionDetailScreen(
                         viewModel = detailViewModel,
-                        onDeleted = { navigator.navigateBack() }
+                        onDeleted = {
+                            selectedSessionId = null
+                            navigator.navigateBack()
+                        }
                     )
                 }
             }
