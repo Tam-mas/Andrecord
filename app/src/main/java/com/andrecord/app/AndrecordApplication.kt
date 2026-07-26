@@ -13,6 +13,7 @@ import com.andrecord.app.data.SessionRepository
 import com.andrecord.app.diarization.DiarizationEngine
 import com.andrecord.app.diarization.SherpaOnnxDiarizationEngine
 import com.andrecord.app.recording.AndroidRecordingServiceStarter
+import com.andrecord.app.recording.LiveTranscriptState
 import com.andrecord.app.recording.RecordingController
 import com.andrecord.app.workers.RetentionWorker
 import kotlinx.coroutines.CoroutineScope
@@ -31,6 +32,7 @@ class AppContainer(app: Application) {
     ) { path -> File(path).delete() }
 
     val accessibilityServiceStatus = AccessibilityServiceStatus(app)
+    val liveTranscriptState = LiveTranscriptState()
 
     lateinit var streamingAsrEngine: StreamingAsrEngine
     lateinit var diarizationEngine: DiarizationEngine

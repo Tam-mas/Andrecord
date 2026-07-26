@@ -154,6 +154,7 @@ class RecordingService : Service() {
             return
         }
 
+        container.liveTranscriptState.start(id, startTime)
         recordingJob = scope.launch {
             // Opened inside the try below rather than here: a throw out here (a WAV file that
             // can't be opened) would skip the teardown entirely, leaking the microphone and the
@@ -252,6 +253,7 @@ class RecordingService : Service() {
                     container.streamingAsrEngine.stop()
                     drainAsrEvents(container, pendingSegments)
                 }
+                step("Clearing the live transcript") { container.liveTranscriptState.clear() }
             }
 
             // Final flush. The 5-second cadence above always leaves a tail unwritten, and
@@ -317,7 +319,13 @@ class RecordingService : Service() {
     private fun drainAsrEvents(container: AppContainer, into: MutableList<AsrEvent.Final>) {
         var event = container.streamingAsrEngine.poll()
         while (event != null) {
-            if (event is AsrEvent.Final) into.add(event)
+            when (val e = event!!) {
+                is AsrEvent.Final -> {
+                    into.add(e)
+                    container.liveTranscriptState.appendFinal(e.text)
+                }
+                is AsrEvent.Partial -> container.liveTranscriptState.updatePartial(e.text)
+            }
             event = container.streamingAsrEngine.poll()
         }
     }
