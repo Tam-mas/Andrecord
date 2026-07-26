@@ -23,4 +23,17 @@ class TimelineProportionsTest {
     fun `empty segments produces empty proportions`() {
         assertEquals(emptyList<Pair<String?, Float>>(), computeTimelineProportions(emptyList()))
     }
+
+    @Test
+    fun `merges consecutive null speakers`() {
+        val segments = listOf(
+            TranscriptSegment(sessionId = "s1", startMs = 0, endMs = 1000, speakerLabel = null, text = "a"),
+            TranscriptSegment(sessionId = "s1", startMs = 1000, endMs = 2000, speakerLabel = null, text = "b"),
+            TranscriptSegment(sessionId = "s1", startMs = 2000, endMs = 3000, speakerLabel = "Speaker 1", text = "c"),
+        )
+
+        val result = computeTimelineProportions(segments)
+
+        assertEquals(listOf(null to (2f / 3f), "Speaker 1" to (1f / 3f)), result)
+    }
 }
