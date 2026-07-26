@@ -5,7 +5,6 @@ import androidx.work.Configuration
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
-import com.andrecord.app.asr.AsrEvent
 import com.andrecord.app.asr.SherpaOnnxStreamingAsrEngine
 import com.andrecord.app.asr.StreamingAsrEngine
 import com.andrecord.app.data.AndrecordDatabase
@@ -15,8 +14,11 @@ import com.andrecord.app.diarization.SherpaOnnxDiarizationEngine
 import com.andrecord.app.recording.AndroidRecordingServiceStarter
 import com.andrecord.app.recording.RecordingController
 import com.andrecord.app.workers.RetentionWorker
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import java.io.File
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
 class AppContainer(app: Application) {
@@ -27,8 +29,6 @@ class AppContainer(app: Application) {
         database.transcriptSegmentDao()
     ) { path -> File(path).delete() }
 
-    val pendingAsrSegments = ConcurrentHashMap<String, MutableList<AsrEvent.Final>>()
-
     lateinit var streamingAsrEngine: StreamingAsrEngine
     lateinit var diarizationEngine: DiarizationEngine
     lateinit var recordingController: RecordingController
@@ -36,6 +36,10 @@ class AppContainer(app: Application) {
 
 class AndrecordApplication : Application(), Configuration.Provider {
     lateinit var container: AppContainer
+
+    // Application-lifetime scope for the startup work that has to happen off the main thread.
+    // SupervisorJob so one failed startup task can't cancel the others.
+    private val appScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder().build()
@@ -46,7 +50,19 @@ class AndrecordApplication : Application(), Configuration.Provider {
         container.streamingAsrEngine = SherpaOnnxStreamingAsrEngine(this)
         container.diarizationEngine = SherpaOnnxDiarizationEngine(this)
         container.recordingController = RecordingController(container.sessionRepository, AndroidRecordingServiceStarter(this))
+        reconcileInterruptedSessions()
         scheduleRetention()
+    }
+
+    /**
+     * A session whose process was killed mid-recording stays in RECORDING status forever --
+     * nothing else ever moves it on, and the UI offers no way to clear it. Sweep once at startup
+     * so those rows surface as errored instead of pretending to still be recording. Safe here
+     * because the app process has just been created, so no recording can legitimately be in
+     * flight yet.
+     */
+    private fun reconcileInterruptedSessions() {
+        appScope.launch { container.sessionRepository.reconcileInterruptedSessions() }
     }
 
     private fun scheduleRetention() {

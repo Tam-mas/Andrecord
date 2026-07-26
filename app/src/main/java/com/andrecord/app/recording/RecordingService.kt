@@ -21,7 +21,9 @@ import androidx.work.Data
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import com.andrecord.app.AndrecordApplication
+import com.andrecord.app.AppContainer
 import com.andrecord.app.asr.AsrEvent
+import com.andrecord.app.data.SessionRepository
 import com.andrecord.app.data.TranscriptSegment
 import com.andrecord.app.workers.DiarizationWorker
 import kotlinx.coroutines.CoroutineScope
@@ -84,13 +86,39 @@ class RecordingService : Service() {
         wavFile = File(filesDir, "audio/$id.wav").apply { parentFile?.mkdirs() }
 
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-            scope.launch { container.sessionRepository.markError(id, "Microphone permission not granted") }
-            stopSelf()
+            abortStart(id, "Microphone permission not granted")
             return
         }
         if (!hasEnoughStorage()) {
-            scope.launch { container.sessionRepository.markError(id, "Not enough storage to record") }
-            stopSelf()
+            abortStart(id, "Not enough storage to record")
+            return
+        }
+
+        // getMinBufferSize() returns a negative ERROR/ERROR_BAD_VALUE constant when the requested
+        // format isn't supported or the audio service is unreachable; ShortArray(negative) below
+        // would throw, so treat it as a pre-flight failure like any other.
+        val minBufferSize = AudioRecord.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+        if (minBufferSize <= 0) {
+            abortStart(id, "Microphone is unavailable")
+            return
+        }
+
+        val record = try {
+            AudioRecord(
+                MediaRecorder.AudioSource.MIC, SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT, minBufferSize * 2
+            )
+        } catch (e: IllegalArgumentException) {
+            abortStart(id, "Microphone is unavailable")
+            return
+        }
+        // The AudioRecord constructor does not throw when the mic is already owned by another
+        // app (a call in progress, a voice assistant that hasn't released it yet) -- it hands
+        // back an object in STATE_UNINITIALIZED, and startRecording() on that object throws
+        // IllegalStateException straight onto the caller's thread, crashing the service.
+        if (record.state != AudioRecord.STATE_INITIALIZED) {
+            record.release()
+            abortStart(id, "Microphone is in use by another app")
             return
         }
 
@@ -100,14 +128,17 @@ class RecordingService : Service() {
         )
         vibrate(longArrayOf(0, 150))
 
-        val minBufferSize = AudioRecord.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
-        val record = AudioRecord(
-            MediaRecorder.AudioSource.MIC, SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO,
-            AudioFormat.ENCODING_PCM_16BIT, minBufferSize * 2
-        )
         audioRecord = record
         container.streamingAsrEngine.start()
-        record.startRecording()
+        try {
+            record.startRecording()
+        } catch (e: IllegalStateException) {
+            container.streamingAsrEngine.stop()
+            releaseAudioRecord(record)
+            audioRecord = null
+            abortStart(id, "Microphone is in use by another app")
+            return
+        }
 
         recordingJob = scope.launch {
             val pcmFile = RandomAccessFile(wavFile, "rw")
@@ -115,6 +146,13 @@ class RecordingService : Service() {
             val buffer = ShortArray(minBufferSize)
             var lastFlush = System.currentTimeMillis()
             var failureReason: String? = null
+
+            // Finalized ASR utterances that haven't reached Room yet. Deliberately local to this
+            // coroutine (rather than the process-wide map this used to accumulate into): only this
+            // coroutine touches it, flushPendingSegments() drains what it writes, and nothing
+            // outside this service reads it -- DiarizationWorker now reads the flushed rows back
+            // out of Room instead, so it survives the process death WorkManager outlives.
+            val pendingSegments = mutableListOf<AsrEvent.Final>()
 
             try {
                 while (!stopRequested) {
@@ -137,16 +175,10 @@ class RecordingService : Service() {
                     pcmFile.write(shortArrayToBytes(buffer, read))
 
                     container.streamingAsrEngine.acceptWaveform(floatSamples)
-                    var event = container.streamingAsrEngine.poll()
-                    while (event != null) {
-                        if (event is AsrEvent.Final) {
-                            container.pendingAsrSegments.getOrPut(id) { mutableListOf() }.add(event)
-                        }
-                        event = container.streamingAsrEngine.poll()
-                    }
+                    drainAsrEvents(container, pendingSegments)
 
                     if (System.currentTimeMillis() - lastFlush > FLUSH_INTERVAL_MS) {
-                        flushPendingSegments(id)
+                        flushPendingSegments(id, pendingSegments)
                         lastFlush = System.currentTimeMillis()
                     }
                 }
@@ -168,12 +200,22 @@ class RecordingService : Service() {
                 // them out from under a still-running acceptWaveform()/read() call.
                 releaseAudioRecord(record)
                 audioRecord = null
+                // stop() drains sherpa-onnx's last in-progress hypothesis as one more Final event
+                // before releasing the stream, so poll once more here to pick up the trailing
+                // utterance -- otherwise whatever was said in the ~1.4s before the endpoint rule
+                // would have fired (i.e. the last sentence, right before the user hits stop) is
+                // decoded and then thrown away. This is the last point at which anyone can still
+                // observe it: stopRecording() only joins this job.
                 container.streamingAsrEngine.stop()
+                drainAsrEvents(container, pendingSegments)
             }
 
+            // Final flush. The 5-second cadence above always leaves a tail unwritten, and
+            // DiarizationWorker reads these rows back out of Room as its source of truth, so
+            // everything must be durable before stopRecording()'s join() returns and enqueues it.
+            flushPendingSegments(id, pendingSegments)
+
             if (failureReason != null) {
-                // Preserve whatever was already flushed to the DB rather than losing the session.
-                flushPendingSegments(id)
                 container.sessionRepository.markError(id, failureReason)
                 ServiceCompat.stopForeground(this@RecordingService, Service.STOP_FOREGROUND_REMOVE)
                 stopSelf()
@@ -196,20 +238,60 @@ class RecordingService : Service() {
         return stat.availableBytes > MIN_FREE_BYTES
     }
 
-    private suspend fun flushPendingSegments(id: String) {
-        val container = (application as AndrecordApplication).container
-        val pending = container.pendingAsrSegments[id].orEmpty().toList()
-        for (segment in pending) {
-            container.sessionRepository.appendSegment(
-                TranscriptSegment(sessionId = id, startMs = segment.startMs, endMs = segment.endMs, speakerLabel = null, text = segment.text)
-            )
+    private fun drainAsrEvents(container: AppContainer, into: MutableList<AsrEvent.Final>) {
+        var event = container.streamingAsrEngine.poll()
+        while (event != null) {
+            if (event is AsrEvent.Final) into.add(event)
+            event = container.streamingAsrEngine.poll()
         }
     }
 
+    private suspend fun flushPendingSegments(id: String, pending: MutableList<AsrEvent.Final>) {
+        flushSegments((application as AndrecordApplication).container.sessionRepository, id, pending)
+    }
+
+    /**
+     * Abandons a recording that never actually got off the ground, leaving no trace that a later
+     * stop could act on: the session is marked ERROR, this service's per-session state is cleared
+     * so a stray ACTION_STOP no-ops instead of flipping the session back to PROCESSING, and the
+     * shared RecordingController is reset to IDLE so the user's next trigger press starts a new
+     * recording rather than "stopping" this dead one.
+     */
+    private fun abortStart(id: String, reason: String) {
+        val container = (application as AndrecordApplication).container
+        scope.launch { container.sessionRepository.markError(id, reason) }
+        container.recordingController.reportStartFailure()
+        sessionId = null
+        wavFile = null
+
+        // We were launched via startForegroundService(), so the platform still expects a
+        // startForeground() call within its grace window even on this path; skipping it risks a
+        // ForegroundServiceDidNotStartInTimeException. Best-effort: starting a microphone-typed
+        // foreground service requires RECORD_AUDIO, which on the permission-denied path is
+        // precisely what we don't have, and the platform answers with a SecurityException. There
+        // is no better type available here, and crashing would be strictly worse than the
+        // timeout we're trying to avoid.
+        try {
+            ServiceCompat.startForeground(
+                this, NOTIFICATION_ID, buildNotification("Recording failed"),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+            )
+            ServiceCompat.stopForeground(this, Service.STOP_FOREGROUND_REMOVE)
+        } catch (e: Exception) {
+            // See above; nothing further to do, we're tearing down regardless.
+        }
+        stopSelf()
+    }
+
     private fun stopRecording() {
+        // Checked before `stopping` so that a failed start (which clears sessionId) can never be
+        // "stopped": without this, stop would sail past every guard, join an already-completed
+        // job as a no-op, and flip the errored session back to PROCESSING with a WAV that was
+        // never written.
+        val id = sessionId ?: return
+        val file = wavFile ?: return
         if (stopping) return
         stopping = true
-        val id = sessionId ?: return
         val container = (application as AndrecordApplication).container
         val endTime = System.currentTimeMillis()
         val durationMs = endTime - startTime
@@ -225,14 +307,14 @@ class RecordingService : Service() {
 
             container.sessionRepository.markProcessing(
                 id, endTime, durationMs,
-                audioFilePath = wavFile!!.absolutePath,
+                audioFilePath = file.absolutePath,
                 audioDeleteAt = endTime + TimeUnit.DAYS.toMillis(7)
             )
             val request = OneTimeWorkRequestBuilder<DiarizationWorker>()
                 .setInputData(
                     Data.Builder()
                         .putString(DiarizationWorker.KEY_SESSION_ID, id)
-                        .putString(DiarizationWorker.KEY_WAV_PATH, wavFile!!.absolutePath)
+                        .putString(DiarizationWorker.KEY_WAV_PATH, file.absolutePath)
                         .putLong(DiarizationWorker.KEY_DURATION_MS, durationMs)
                         .putLong(DiarizationWorker.KEY_START_TIME, startTime)
                         .build()
@@ -299,5 +381,32 @@ class RecordingService : Service() {
         private const val SAMPLE_RATE = 16000
         private const val FLUSH_INTERVAL_MS = 5000L
         private const val MIN_FREE_BYTES = 50L * 1024 * 1024 // 50MB headroom
+
+        /**
+         * Writes the not-yet-persisted utterances in [pending] to Room as unlabeled segments and
+         * drains them.
+         *
+         * Draining is the whole point, and why this lives in the companion where it can be tested
+         * directly against a real repository: the old implementation re-read the entire
+         * accumulated list on every 5-second tick and inserted all of it again, so a long meeting
+         * wrote each utterance dozens of times over. Inserting before clearing means a failed
+         * insert leaves the segments queued for the next attempt rather than dropping them.
+         */
+        suspend fun flushSegments(
+            repository: SessionRepository,
+            sessionId: String,
+            pending: MutableList<AsrEvent.Final>
+        ) {
+            if (pending.isEmpty()) return
+            repository.appendSegments(
+                pending.map {
+                    TranscriptSegment(
+                        sessionId = sessionId, startMs = it.startMs, endMs = it.endMs,
+                        speakerLabel = null, text = it.text
+                    )
+                }
+            )
+            pending.clear()
+        }
     }
 }

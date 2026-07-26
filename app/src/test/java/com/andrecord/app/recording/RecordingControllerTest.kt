@@ -21,16 +21,20 @@ class RecordingControllerTest {
         override fun stopRecording() { stopCalled = true }
     }
 
-    private fun buildController(starter: FakeServiceStarter): Pair<RecordingController, AndrecordDatabase> {
+    private fun buildController(
+        starter: FakeServiceStarter,
+        ids: List<String> = listOf("fixed-id")
+    ): Pair<RecordingController, AndrecordDatabase> {
         val db = Room.inMemoryDatabaseBuilder(
             ApplicationProvider.getApplicationContext(),
             AndrecordDatabase::class.java
         ).allowMainThreadQueries().build()
         val repo = SessionRepository(db.sessionDao(), db.transcriptSegmentDao()) { }
+        val idQueue = ArrayDeque(ids)
         val controller = RecordingController(
             repository = repo,
             serviceStarter = starter,
-            idGenerator = { "fixed-id" },
+            idGenerator = { idQueue.removeFirstOrNull() ?: "fixed-id" },
             clock = { 42_000L }
         )
         return controller to db
@@ -59,6 +63,35 @@ class RecordingControllerTest {
 
         assertEquals(RecordingState.IDLE, state)
         assertEquals(true, starter.stopCalled)
+        db.close()
+    }
+
+    @Test
+    fun `reportStartFailure returns the controller to idle`() = runTest {
+        val starter = FakeServiceStarter()
+        val (controller, db) = buildController(starter)
+        controller.toggle()
+        assertEquals(RecordingState.RECORDING, controller.currentState())
+
+        controller.reportStartFailure()
+
+        assertEquals(RecordingState.IDLE, controller.currentState())
+        db.close()
+    }
+
+    @Test
+    fun `after a failed start the next toggle starts a fresh session instead of stopping`() = runTest {
+        val starter = FakeServiceStarter()
+        val (controller, db) = buildController(starter, ids = listOf("failed-id", "next-id"))
+        controller.toggle()
+        controller.reportStartFailure()
+
+        val state = controller.toggle()
+
+        assertEquals(RecordingState.RECORDING, state)
+        assertEquals(false, starter.stopCalled)
+        assertEquals("next-id", starter.startedSessionId)
+        assertEquals(SessionStatus.RECORDING, db.sessionDao().getById("next-id")?.status)
         db.close()
     }
 }

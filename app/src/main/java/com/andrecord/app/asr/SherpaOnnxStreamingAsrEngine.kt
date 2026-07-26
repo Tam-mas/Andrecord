@@ -77,8 +77,27 @@ class SherpaOnnxStreamingAsrEngine(private val context: Context) : StreamingAsrE
     override fun poll(): AsrEvent? = pendingEvents.poll()
 
     override fun stop() {
+        drainTrailingFinal()
         stream.release()
         recognizer.release()
+    }
+
+    /**
+     * Emits whatever hypothesis is still in flight when recording stops as one last
+     * [AsrEvent.Final]. [acceptWaveform] only produces a Final when sherpa-onnx's endpoint rule
+     * fires (roughly 1.4s of trailing silence), so without this the last thing said before the
+     * user hits stop -- typically the closing sentence of the meeting -- is decoded and then
+     * discarded with the stream. Callers must poll() once more after stop() to observe it.
+     */
+    private fun drainTrailingFinal() {
+        while (recognizer.isReady(stream)) {
+            recognizer.decode(stream)
+        }
+        val text = recognizer.getResult(stream).text
+        if (text.isNotBlank()) {
+            val nowMs = (samplesProcessed * 1000L) / SAMPLE_RATE
+            pendingEvents.add(AsrEvent.Final(startMs = segmentStartMs, endMs = nowMs, text = text))
+        }
     }
 
     /** sherpa-onnx resolves model paths relative to the AssetManager root, so the

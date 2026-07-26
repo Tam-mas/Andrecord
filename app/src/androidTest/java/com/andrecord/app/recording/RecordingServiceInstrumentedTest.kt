@@ -25,5 +25,12 @@ class RecordingServiceInstrumentedTest {
         Thread.sleep(1000)
         // Manual verification: check logcat for no crash, and confirm
         // filesDir/audio/smoke-test-session.wav exists and is non-empty.
+        //
+        // Note this deliberately says nothing about the transcript: 3 seconds is shorter than one
+        // flush interval, and on an emulator the virtual microphone records silence, so no ASR
+        // segments are produced at all. Transcript correctness -- specifically that each utterance
+        // is written exactly once across many flush cycles and is then labeled in place rather
+        // than duplicated by DiarizationWorker -- is covered by TranscriptPipelineInstrumentedTest,
+        // which replays a real speech fixture through the same code path.
     }
 }
