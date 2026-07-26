@@ -6,6 +6,7 @@ import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import com.andrecord.app.asr.AsrEvent
+import com.andrecord.app.asr.SherpaOnnxStreamingAsrEngine
 import com.andrecord.app.asr.StreamingAsrEngine
 import com.andrecord.app.data.AndrecordDatabase
 import com.andrecord.app.data.SessionRepository
@@ -40,6 +41,7 @@ class AndrecordApplication : Application(), Configuration.Provider {
     override fun onCreate() {
         super.onCreate()
         container = AppContainer(this)
+        container.streamingAsrEngine = SherpaOnnxStreamingAsrEngine(this)
         scheduleRetention()
     }
 
