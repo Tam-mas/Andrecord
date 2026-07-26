@@ -9,6 +9,7 @@
     <!-- Deliberately no INTERNET permission: this app is fully on-device. -->
 
     <application
+        android:name=".AndrecordApplication"
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
