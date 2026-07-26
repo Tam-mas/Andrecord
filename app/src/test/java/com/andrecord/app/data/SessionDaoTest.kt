@@ -7,11 +7,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
-import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-// Robolectric does not yet support API 36 (this project's targetSdk/compileSdk); pin to a supported level.
-@Config(sdk = [34])
 class SessionDaoTest {
 
     private fun buildDb() = Room.inMemoryDatabaseBuilder(
