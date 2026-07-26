@@ -70,7 +70,7 @@ fun RecordingScreen(viewModel: RecordingViewModel, onBack: () -> Unit) {
                         Text(
                             text = partial,
                             style = MaterialTheme.typography.bodyLarge.copy(fontStyle = FontStyle.Italic),
-                            color = AndrecordColors.Ink600
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                         )
                     }
                 }
