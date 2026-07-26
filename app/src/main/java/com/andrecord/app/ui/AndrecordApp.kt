@@ -30,19 +30,30 @@ fun AndrecordApp(container: AppContainer) {
     var selectedSessionId by remember { mutableStateOf<String?>(null) }
 
     val listViewModel = remember {
-        SessionListViewModel(container.sessionRepository, container.recordingController, container.accessibilityServiceStatus)
+        SessionListViewModel(
+            container.sessionRepository,
+            container.recordingController,
+            container.accessibilityServiceStatus,
+            container.liveTranscriptState
+        )
     }
 
     NavigableListDetailPaneScaffold(
         navigator = navigator,
         listPane = {
             AnimatedPane {
+                // TODO(Task 7): wire these to the real recording/settings destinations once the
+                // top-level destination switch lands -- these are no-ops for now so this screen's
+                // new recording bar and settings gear compile and render ahead of that.
                 SessionListScreen(
                     viewModel = listViewModel,
                     onSessionClick = { id ->
                         selectedSessionId = id
                         navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, id)
-                    }
+                    },
+                    onRecordingStarted = {},
+                    onReopenRecording = {},
+                    onOpenSettings = {}
                 )
             }
         },
