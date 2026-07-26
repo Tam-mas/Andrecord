@@ -1,5 +1,12 @@
 # Changelog
 
+### [2026-07-27 15:10] Added
+
+**Tech:** `RecordingViewModel`, `RecordingScreen` (`ui/recording/`), pure `formatElapsed(startMillis, nowMillis): String`  
+**Dev:** `RecordingViewModel` is a thin adapter: it exposes `LiveTranscriptState.snapshot` directly as its own `StateFlow<LiveTranscriptSnapshot>` and forwards `onStopClick()` to `recordingController.toggle()` inside `viewModelScope`. `RecordingScreen` shows an elapsed timer (ticking once/second via a `LaunchedEffect` keyed on `snapshot.startTime`, so it stops re-triggering once a recording ends), a `LazyColumn` of finalized transcript lines rendered in the normal body style, the current partial line appended below them in italic `AndrecordColors.Ink600` so it reads as visually provisional, and a Stop button that calls both `viewModel.onStopClick()` and `onBack()`. `BackHandler` (`androidx.activity.compose.BackHandler`) also routes the system back gesture to `onBack()`. Followed strict TDD for `formatElapsed`: wrote `RecordingScreenTest` first against a `formatElapsed` that didn't exist yet (confirmed a compilation-error RED via `./gradlew :app:testDebugUnitTest --tests ...`), then added the pure function and confirmed GREEN (2/2 passing). Verified `androidx.activity.compose.BackHandler` actually exists in this project's pinned `activity-compose:1.9.1` jar (inspected the resolved artifact's class list) before trusting the brief's usage, given this project's history of Compose BOM version mismatches — it checked out with no changes needed. Full unit suite (52 tests) and `:app:assembleDebug` both pass. Not yet reachable through the running app: this screen isn't wired into navigation until Task 7, so no on-device visual check was done — noted as a limitation rather than forcing a temporary nav hook to see it.  
+**Plain:** Added the actual live-recording screen: a running timer, the transcript scrolling in as it's spoken (with the in-progress sentence shown dimmed and italic underneath the finished lines), and a Stop button.  
+**Why:** The last three tasks built the plumbing that feeds live transcript data during a recording; this is the first thing that actually shows it to you, even though you can't reach it in the app yet — that connection comes in a later task.
+
 ### [2026-07-27 14:35] Added
 
 **Tech:** `AppSettings` (enum `ReopenBehavior`, companion function `parseReopenBehavior()`), `AppContainer.appSettings` — SharedPreferences-backed setting for app reopen behavior  
