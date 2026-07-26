@@ -6,6 +6,8 @@ import com.andrecord.app.accessibility.AccessibilityServiceStatus
 import com.andrecord.app.data.Session
 import com.andrecord.app.data.SessionRepository
 import com.andrecord.app.data.TranscriptSegment
+import com.andrecord.app.recording.LiveTranscriptSnapshot
+import com.andrecord.app.recording.LiveTranscriptState
 import com.andrecord.app.recording.RecordingController
 import com.andrecord.app.recording.RecordingState
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -21,8 +23,11 @@ import kotlinx.coroutines.launch
 class SessionListViewModel(
     private val repository: SessionRepository,
     private val recordingController: RecordingController,
-    private val accessibilityServiceStatus: AccessibilityServiceStatus
+    private val accessibilityServiceStatus: AccessibilityServiceStatus,
+    liveTranscriptState: LiveTranscriptState
 ) : ViewModel() {
+
+    val liveTranscriptSnapshot: StateFlow<LiveTranscriptSnapshot> = liveTranscriptState.snapshot
 
     val sessions: StateFlow<List<Session>> = repository.observeSessions()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())

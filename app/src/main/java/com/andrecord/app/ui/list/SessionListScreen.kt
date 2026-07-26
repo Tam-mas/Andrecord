@@ -20,7 +20,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -28,10 +30,15 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -44,16 +51,37 @@ import com.andrecord.app.data.Session
 import com.andrecord.app.data.TranscriptSegment
 import com.andrecord.app.recording.RecordingState
 import com.andrecord.app.ui.components.SpeakerTimelineStrip
+import com.andrecord.app.ui.recording.formatElapsed
 import com.andrecord.app.ui.theme.AndrecordColors
 import com.andrecord.app.ui.theme.AndrecordTypography
+import kotlinx.coroutines.delay
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SessionListScreen(viewModel: SessionListViewModel, onSessionClick: (String) -> Unit) {
+fun SessionListScreen(
+    viewModel: SessionListViewModel,
+    onSessionClick: (String) -> Unit,
+    onRecordingStarted: () -> Unit,
+    onReopenRecording: () -> Unit,
+    onOpenSettings: () -> Unit
+) {
     val sessions by viewModel.sessions.collectAsState()
     val segmentsBySession by viewModel.segmentsBySession.collectAsState()
     val recordingState by viewModel.recordingState.collectAsState()
     val showAccessibilityBanner by viewModel.showAccessibilityBanner.collectAsState()
+    val liveTranscriptSnapshot by viewModel.liveTranscriptSnapshot.collectAsState()
     val context = LocalContext.current
+
+    // Whichever trigger started the recording -- the FAB, Quick Tap, or the volume-key hold --
+    // this screen navigates to the live view the moment recordingState flips to RECORDING while
+    // it's visible, so all three triggers land you in the same place.
+    var previousRecordingState by remember { mutableStateOf(recordingState) }
+    LaunchedEffect(recordingState) {
+        if (previousRecordingState == RecordingState.IDLE && recordingState == RecordingState.RECORDING) {
+            onRecordingStarted()
+        }
+        previousRecordingState = recordingState
+    }
 
     // The user's path here is: see the banner, background the app, flip the setting in
     // Android's Accessibility settings, then return -- without the process being killed. Only
@@ -71,6 +99,16 @@ fun SessionListScreen(viewModel: SessionListViewModel, onSessionClick: (String) 
     }
 
     Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Andrecord") },
+                actions = {
+                    IconButton(onClick = onOpenSettings) {
+                        Icon(Icons.Filled.Settings, contentDescription = "Settings")
+                    }
+                }
+            )
+        },
         floatingActionButton = {
             FloatingActionButton(onClick = { viewModel.onRecordButtonClick() }) {
                 Icon(
@@ -85,6 +123,11 @@ fun SessionListScreen(viewModel: SessionListViewModel, onSessionClick: (String) 
             verticalArrangement = Arrangement.spacedBy(16.dp),
             modifier = Modifier.fillMaxSize().padding(padding)
         ) {
+            if (recordingState == RecordingState.RECORDING) {
+                item(key = "recording_bar") {
+                    RecordingBar(startTime = liveTranscriptSnapshot.startTime, onClick = onReopenRecording)
+                }
+            }
             if (showAccessibilityBanner) {
                 item(key = "accessibility_banner") {
                     AccessibilityBanner(
@@ -140,6 +183,33 @@ private fun AccessibilityBanner(onOpenSettings: () -> Unit, onDismiss: () -> Uni
                 color = AndrecordColors.Brass500
             )
         }
+    }
+}
+
+@Composable
+private fun RecordingBar(startTime: Long?, onClick: () -> Unit) {
+    var now by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(startTime) {
+        while (startTime != null) {
+            now = System.currentTimeMillis()
+            delay(1000)
+        }
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(AndrecordColors.Brass500)
+            .clickable(onClick = onClick)
+            .padding(16.dp),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(text = "Recording…", style = AndrecordTypography.bodyMedium, color = AndrecordColors.Ink900)
+        Text(
+            text = startTime?.let { formatElapsed(it, now) } ?: "0:00",
+            style = AndrecordTypography.labelSmall,
+            color = AndrecordColors.Ink900
+        )
     }
 }
 
