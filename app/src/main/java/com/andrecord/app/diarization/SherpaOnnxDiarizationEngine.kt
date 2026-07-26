@@ -55,6 +55,24 @@ class SherpaOnnxDiarizationEngine(private val context: Context) : DiarizationEng
         OfflineSpeakerDiarization(assetManager = context.assets, config = config)
     }
 
+    /**
+     * Memory profile -- read before changing anything here.
+     *
+     * [WaveReader.readWaveFromFile] materializes the *entire* recording as a `FloatArray` before
+     * [OfflineSpeakerDiarization.process] runs, and `process()` then builds its own ONNX inference
+     * buffers on top of that. At 16 kHz mono that's ~64 MB of samples per hour of audio (4 bytes
+     * per sample), plus the ~32 MB of loaded model graphs and the segmentation/embedding
+     * activations, all live simultaneously. The neighbourhood of a one-hour meeting is therefore
+     * the practical ceiling, and it is only reachable because the app requests
+     * `android:largeHeap="true"` in AndroidManifest.xml.
+     *
+     * sherpa-onnx's `OfflineSpeakerDiarization` API is whole-array-only -- it exposes no streaming
+     * or chunked entry point -- so bounding this properly means splitting the WAV into windows,
+     * diarizing each, and re-clustering the speaker embeddings across window boundaries so that
+     * "speaker 2" means the same person throughout. That is a genuine rewrite, not a tweak, and is
+     * deliberately not attempted here. Until it exists, very long recordings can still OOM, and
+     * this path has only been exercised against short fixtures.
+     */
     override fun diarize(wavFilePath: String): List<SpeakerSegment> {
         val wave = WaveReader.readWaveFromFile(wavFilePath)
         check(wave.sampleRate == diarizer.sampleRate()) {
