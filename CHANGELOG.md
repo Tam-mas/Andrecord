@@ -1,5 +1,47 @@
 # Changelog
 
+### [2026-07-26 21:10] Fixed
+
+**Tech:** `RecordingService.flushSegments()`, `DiarizationWorker.runDiarization()`, `SessionRepository.replaceSegments()/getSegmentsOnce()` — transcript segments are written once and labeled in place, with Room (not an in-memory buffer) as the worker's source of truth
+**Dev:** Three defects compounded into one. `flushPendingSegments()` re-read the whole accumulated `pendingAsrSegments[id]` list every 5 seconds and re-inserted all of it, so each utterance was written once per remaining flush tick; `DiarizationWorker` then appended a third, speaker-labeled copy of the same list without deleting the unlabeled rows (`TranscriptSegmentDao.deleteForSession` existed but was never called anywhere); and because `pendingAsrSegments` was a process-local `ConcurrentHashMap` on `AppContainer`, a process death between enqueue and execution — precisely what WorkManager is built to survive — left the worker diarizing against an empty list and silently finalizing a session with no transcript. Fixed by making the flush drain what it writes into a buffer local to the capture coroutine, adding a final flush after the capture loop (there was none: a clean stop previously dropped everything since the last 5-second tick), and having the worker read the already-flushed unlabeled rows back out of Room, align them, then `replaceSegments()` — delete-then-insert, which also makes retries idempotent. `pendingAsrSegments` is removed from `AppContainer` entirely; nothing needs it now. Covered by `RecordingServiceFlushTest` (multi-cycle flush, verified RED against the old draining-free implementation), three new `DiarizationWorkerLogicTest` cases, and a new on-device `TranscriptPipelineInstrumentedTest` that replays the real two-speaker speech fixture through the whole pipeline: 3 flush cycles produced 1 row, and diarization left 1 row (now `Speaker 1`), not 2 or 3.
+**Plain:** A recorded meeting's transcript no longer repeats every sentence over and over — each thing said appears exactly once, with its speaker label.
+**Why:** Any recording longer than a few seconds came back as a wall of the same sentences repeated dozens of times, which made the transcript useless to read and would have made the app feel fundamentally broken the first time anyone recorded a real meeting.
+
+### [2026-07-26 21:10] Fixed
+
+**Tech:** `SherpaOnnxStreamingAsrEngine.stop()` — drains the in-flight hypothesis as a final `AsrEvent.Final` before releasing the stream
+**Dev:** A `Final` was only ever emitted when sherpa-onnx's endpoint rule fired (~1.4s of trailing silence), and `stop()` released the stream without draining, so the last sentence spoken before the user hit stop was decoded and then thrown away. `stop()` now decodes any remaining buffered input and queues the result; `RecordingService`'s capture coroutine polls once more after calling `stop()` (inside its teardown `finally`, the last point where anyone can still observe the queue) and includes it in the final flush.
+**Plain:** The last thing said before you stop a recording now makes it into the transcript instead of being silently dropped.
+**Why:** People finish their sentence and then hit stop — losing exactly that sentence, every single time, is the worst possible thing to lose.
+
+### [2026-07-26 21:10] Fixed
+
+**Tech:** `RecordingController.reportStartFailure()`, `RecordingService.abortStart()` — a failed start resets shared state instead of leaving the controller in `RECORDING`
+**Dev:** `start()` set `state = RECORDING` unconditionally with no feedback path from the service, so when `RecordingService` hit a pre-flight failure (mic permission, storage) it called `markError()`+`stopSelf()` while the controller still believed a recording was live. The user's next trigger press then routed to `stop()`, which passed every guard, joined an already-completed job as a no-op, flipped the errored session back to `PROCESSING`, and enqueued diarization against a WAV that never existed. The service now calls back into the shared controller via `AppContainer`, `stopRecording()` bails out when `sessionId` is null (cleared on the failure paths), and the failure paths call `startForeground()` before `stopSelf()` to honour the `startForegroundService()` contract — best-effort, since a microphone-typed foreground service is itself refused when the missing permission is `RECORD_AUDIO`. Also hardened `AudioRecord` setup in the same pass: a negative `getMinBufferSize()` and a constructor that returns `STATE_UNINITIALIZED` (what happens when another app holds the mic) now route through the same abort path instead of throwing `IllegalStateException` onto the service thread. Verified on a Pixel 7 emulator within a single process: two trigger presses with the mic permission revoked produced two distinct errored sessions rather than one session flipped back to processing.
+**Plain:** If a recording can't start — no microphone permission, no storage, or the mic is busy — the app now cleanly reports the failure and your next press starts a fresh recording, instead of getting stuck in a state where it thinks it's still recording.
+**Why:** A single denied permission used to poison the next recording too, which is a horrible way to discover something went wrong.
+
+### [2026-07-26 21:10] Fixed
+
+**Tech:** `AndrecordApplication.onCreate()`, `SessionRepository.reconcileInterruptedSessions()`, `SessionDao.getByStatus()` — one-time startup sweep of sessions stranded in `RECORDING`
+**Dev:** Nothing reconciled session state at startup, so a process killed mid-recording left its row in `RECORDING` permanently, with no path in the UI to clear it. A `CoroutineScope(Dispatchers.IO + SupervisorJob())` on the Application now marks any such row `ERROR` with "Interrupted — app was closed unexpectedly" once at startup; safe to repeat, since a reconciled session no longer matches. Verified on device: force-stopping mid-recording left the row `RECORDING`, and relaunching flipped it to the errored state.
+**Plain:** A recording interrupted by the phone killing the app no longer shows as permanently "recording" — it's marked as interrupted next time you open the app.
+**Why:** A row stuck on "recording" forever, with no way to dismiss it, looks like the app is broken and quietly eating your battery.
+
+### [2026-07-26 21:10] Fixed
+
+**Tech:** `SpeakerTimelineStrip` — `Modifier.weight(fraction)` instead of `Modifier.fillMaxWidth(fraction)`
+**Dev:** `Row` measures an unweighted child against the *remaining* main-axis space, so fractional children compound-shrink (two 0.5 fractions render as 50% then 25% of what's left) and the strip never filled its width. `weight()` divides the full width proportionally and self-normalizes fractions that don't sum to 1.0 — as they don't here, since the silence between utterances isn't attributed to any speaker. Zero-length segments are filtered out because `weight()` rejects a non-positive weight. Rendering-only: `TimelineProportionsTest` tests the pure function and passes unchanged.
+**Plain:** The colored speaker timeline under each session now fills the full width with correctly-sized bands, instead of trailing off into ever-smaller slivers.
+**Why:** The timeline strip is the at-a-glance signature of each recording, and it was visibly wrong in a way that made every session look half-empty.
+
+### [2026-07-26 21:10] Performance
+
+**Tech:** `AndroidManifest.xml` (`android:largeHeap`, `dataSync` foreground service type), `DiarizationWorker.getForegroundInfo()` — headroom and unlimited execution time for diarizing long recordings
+**Dev:** `SherpaOnnxDiarizationEngine.diarize()` materializes the entire recording as a `FloatArray` before ONNX inference (~64 MB/hour of samples at 16 kHz, on top of ~32 MB of model graphs), and the worker was additionally subject to WorkManager's ~10 minute execution ceiling — where a timeout or OOM burns a retry attempt and, once `MAX_ATTEMPTS` is exhausted, finalizes the session with zero speaker labels. Mitigated by `android:largeHeap="true"` and by promoting the worker with `setForeground()`/`getForegroundInfo()`, which removes the execution limit while a notification is shown. Since minSdk is 34, the typed `ForegroundInfo` overload is mandatory: the worker declares `FOREGROUND_SERVICE_TYPE_DATA_SYNC` (the mic is already released by then, so `microphone` would be both wrong and permission-gated), which required declaring that type on WorkManager's own `SystemForegroundService` via `tools:node="merge"` plus the `FOREGROUND_SERVICE_DATA_SYNC` permission. The promotion is best-effort — wrapped in a try/catch so a refused promotion doesn't fail the work outright. Confirmed on device (`WM-Processor: Moving WorkSpec to the foreground`, worker `SUCCESS`). This is mitigation, not a fix: `OfflineSpeakerDiarization` has no streaming entry point, so genuinely bounding memory means chunked diarization with cross-window speaker re-clustering — documented in `SherpaOnnxDiarizationEngine`, and still unvalidated past short fixtures.
+**Plain:** Long recordings now get more memory and unlimited processing time to finish their speaker breakdown, instead of being cut off partway through.
+**Why:** The whole point of this app is recording actual hour-long meetings, and the processing step had only ever been tried on clips a few seconds long.
+
 ### [2026-07-26 20:55] Fixed
 
 **Tech:** `app/src/main/java/com/andrecord/app/ui/AndrecordApp.kt` — clear `selectedSessionId` on delete
