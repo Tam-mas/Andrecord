@@ -67,24 +67,52 @@ class RecordingControllerTest {
     }
 
     @Test
-    fun `reportStartFailure returns the controller to idle`() = runTest {
+    fun `reportRecordingEnded returns the controller to idle`() = runTest {
         val starter = FakeServiceStarter()
         val (controller, db) = buildController(starter)
         controller.toggle()
         assertEquals(RecordingState.RECORDING, controller.currentState())
 
-        controller.reportStartFailure()
+        controller.reportRecordingEnded()
 
         assertEquals(RecordingState.IDLE, controller.currentState())
         db.close()
     }
 
+    /** RecordingService.abortStart(): a pre-flight failure, before the capture loop ever runs. */
     @Test
     fun `after a failed start the next toggle starts a fresh session instead of stopping`() = runTest {
         val starter = FakeServiceStarter()
         val (controller, db) = buildController(starter, ids = listOf("failed-id", "next-id"))
         controller.toggle()
-        controller.reportStartFailure()
+        controller.reportRecordingEnded()
+
+        val state = controller.toggle()
+
+        assertEquals(RecordingState.RECORDING, state)
+        assertEquals(false, starter.stopCalled)
+        assertEquals("next-id", starter.startedSessionId)
+        assertEquals(SessionStatus.RECORDING, db.sessionDao().getById("next-id")?.status)
+        db.close()
+    }
+
+    /**
+     * The sibling case: the capture loop dies part-way through a recording that did start (ran out
+     * of storage, mic permission revoked mid-recording, mic became unavailable). That path used to
+     * call markError() + stopSelf() without telling the controller, leaving it in RECORDING, so the
+     * next trigger press routed to stop() and flipped the just-errored session back to PROCESSING.
+     * It now reports through the same call as the pre-flight path, which is why that method is
+     * named for the outcome rather than for a failed start.
+     */
+    @Test
+    fun `after a mid-recording failure the next toggle starts a fresh session instead of stopping`() = runTest {
+        val starter = FakeServiceStarter()
+        val (controller, db) = buildController(starter, ids = listOf("errored-id", "next-id"))
+        controller.toggle()
+        assertEquals(RecordingState.RECORDING, controller.currentState())
+
+        controller.reportRecordingEnded()
+        assertEquals(RecordingState.IDLE, controller.currentState())
 
         val state = controller.toggle()
 

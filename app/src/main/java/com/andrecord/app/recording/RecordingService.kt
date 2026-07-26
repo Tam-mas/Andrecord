@@ -43,10 +43,24 @@ class RecordingService : Service() {
     // or from a subsequent recording's error-marking) from ever running.
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private var audioRecord: AudioRecord? = null
+
+    // sessionId/wavFile are written from the main thread (startRecording/abortStart) *and* from
+    // the capture coroutine's mid-recording failure path, and read by stopRecording() on the main
+    // thread. Volatile so the failure path's clear-out is promptly visible to a later stop rather
+    // than leaving it acting on a recording that is already over.
+    @Volatile
     private var sessionId: String? = null
-    private var startTime: Long = 0L
+    @Volatile
     private var wavFile: File? = null
+    private var startTime: Long = 0L
     private var recordingJob: Job? = null
+
+    // Set by the capture coroutine, before it completes, to the id of a recording it failed and
+    // marked ERROR itself. stopRecording()'s join() returns for an already-completed job whether
+    // it succeeded or failed, so it consults this to tell the two apart; keyed by id rather than a
+    // bare boolean so it can never be misread as applying to a different recording.
+    @Volatile
+    private var failedSessionId: String? = null
 
     // Signals the capture loop to stop. A plain (non-volatile) `audioRecord = null` write from
     // stopRecording()'s calling thread is not guaranteed to be visible promptly to the capture
@@ -141,11 +155,32 @@ class RecordingService : Service() {
         }
 
         recordingJob = scope.launch {
-            val pcmFile = RandomAccessFile(wavFile, "rw")
-            writeWavPlaceholderHeader(pcmFile)
-            val buffer = ShortArray(minBufferSize)
+            // Opened inside the try below rather than here: a throw out here (a WAV file that
+            // can't be opened) would skip the teardown entirely, leaking the microphone and the
+            // ASR stream and letting the exception escape the coroutine -- the same silent
+            // "join() returns, stop marks it PROCESSING" failure described on `step`.
+            var pcmFile: RandomAccessFile? = null
             var lastFlush = System.currentTimeMillis()
             var failureReason: String? = null
+
+            // Runs one finalization step, turning a throw into a failureReason instead of letting
+            // it escape this coroutine. Everything after the capture loop goes through this,
+            // because an escaping exception here is worse than a plain crash: join() returns for
+            // an exceptionally-completed job exactly as it does for a successful one, so
+            // stopRecording() would carry on to markProcessing() + enqueue diarization while the
+            // final flush and markError() were both skipped -- a truncated or empty transcript
+            // presented as a successful recording, with the exception itself disappearing into the
+            // default uncaught-exception handler. Steps are guarded individually so a failure in
+            // one still lets the others run: finalizeWavHeader()'s seek/write can hit the very
+            // out-of-storage condition that got us here, and the microphone must be released
+            // regardless.
+            suspend fun step(what: String, block: suspend () -> Unit) {
+                try {
+                    block()
+                } catch (e: Exception) {
+                    if (failureReason == null) failureReason = "$what failed: ${e.message}"
+                }
+            }
 
             // Finalized ASR utterances that haven't reached Room yet. Deliberately local to this
             // coroutine (rather than the process-wide map this used to accumulate into): only this
@@ -155,6 +190,11 @@ class RecordingService : Service() {
             val pendingSegments = mutableListOf<AsrEvent.Final>()
 
             try {
+                val out = RandomAccessFile(wavFile, "rw")
+                pcmFile = out
+                writeWavPlaceholderHeader(out)
+                val buffer = ShortArray(minBufferSize)
+
                 while (!stopRequested) {
                     if (!hasEnoughStorage()) {
                         failureReason = "Ran out of storage"
@@ -172,7 +212,7 @@ class RecordingService : Service() {
                     }
                     if (read <= 0) continue
                     val floatSamples = FloatArray(read) { buffer[it] / 32768.0f }
-                    pcmFile.write(shortArrayToBytes(buffer, read))
+                    out.write(shortArrayToBytes(buffer, read))
 
                     container.streamingAsrEngine.acceptWaveform(floatSamples)
                     drainAsrEvents(container, pendingSegments)
@@ -192,13 +232,15 @@ class RecordingService : Service() {
                 // join() to proceed against a never-finalized file.
                 failureReason = failureReason ?: "Unexpected error: ${e.message}"
             } finally {
-                finalizeWavHeader(pcmFile)
-                pcmFile.close()
+                pcmFile?.let { file ->
+                    step("Finalizing the recording file") { finalizeWavHeader(file) }
+                    step("Closing the recording file") { file.close() }
+                }
 
                 // Only this coroutine ever touches `record`/the ASR engine, so tearing them
                 // down here (rather than from stopRecording()'s caller thread) avoids releasing
                 // them out from under a still-running acceptWaveform()/read() call.
-                releaseAudioRecord(record)
+                step("Releasing the microphone") { releaseAudioRecord(record) }
                 audioRecord = null
                 // stop() drains sherpa-onnx's last in-progress hypothesis as one more Final event
                 // before releasing the stream, so poll once more here to pick up the trailing
@@ -206,19 +248,53 @@ class RecordingService : Service() {
                 // would have fired (i.e. the last sentence, right before the user hits stop) is
                 // decoded and then thrown away. This is the last point at which anyone can still
                 // observe it: stopRecording() only joins this job.
-                container.streamingAsrEngine.stop()
-                drainAsrEvents(container, pendingSegments)
+                step("Stopping transcription") {
+                    container.streamingAsrEngine.stop()
+                    drainAsrEvents(container, pendingSegments)
+                }
             }
 
             // Final flush. The 5-second cadence above always leaves a tail unwritten, and
             // DiarizationWorker reads these rows back out of Room as its source of truth, so
             // everything must be durable before stopRecording()'s join() returns and enqueues it.
-            flushPendingSegments(id, pendingSegments)
+            step("Saving the transcript") { flushPendingSegments(id, pendingSegments) }
 
-            if (failureReason != null) {
-                container.sessionRepository.markError(id, failureReason)
-                ServiceCompat.stopForeground(this@RecordingService, Service.STOP_FOREGROUND_REMOVE)
-                stopSelf()
+            val reason = failureReason
+            if (reason != null) {
+                // Publish the failure before this job completes so stopRecording()'s join() is
+                // guaranteed to see it. A stop can legitimately race a mid-recording failure --
+                // the user hits the trigger in the same instant the disk fills -- and without this
+                // it would pass its guards, join this job, and flip the just-errored session back
+                // to PROCESSING with diarization enqueued over it.
+                failedSessionId = id
+
+                // Give the shared state back, exactly as abortStart() does for a pre-flight
+                // failure: clearing sessionId/wavFile makes any later ACTION_STOP a clean no-op,
+                // and resetting the controller means the user's next trigger press starts a fresh
+                // recording instead of "stopping" this dead one. Guarded on the id still being
+                // ours because everything above this point can suspend: a new recording may
+                // already have been started on this same service instance, and clearing its state
+                // or tearing down its foreground service would turn one failure into two.
+                val stillCurrent = sessionId == id
+                if (stillCurrent) {
+                    sessionId = null
+                    wavFile = null
+                    container.recordingController.reportRecordingEnded()
+                }
+
+                try {
+                    container.sessionRepository.markError(id, reason)
+                } catch (e: Exception) {
+                    // Last line of defence, and deliberately swallowed: there is nowhere left to
+                    // route this to, and the session simply stays in RECORDING until the startup
+                    // sweep (reconcileInterruptedSessions) surfaces it as errored. Rethrowing
+                    // would take out the state resets above with it.
+                }
+
+                if (stillCurrent) {
+                    ServiceCompat.stopForeground(this@RecordingService, Service.STOP_FOREGROUND_REMOVE)
+                    stopSelf()
+                }
             }
         }
     }
@@ -260,7 +336,7 @@ class RecordingService : Service() {
     private fun abortStart(id: String, reason: String) {
         val container = (application as AndrecordApplication).container
         scope.launch { container.sessionRepository.markError(id, reason) }
-        container.recordingController.reportStartFailure()
+        container.recordingController.reportRecordingEnded()
         sessionId = null
         wavFile = null
 
@@ -304,6 +380,12 @@ class RecordingService : Service() {
             // finalizing the WAV header, and stopping the ASR engine, before we read the (now
             // final) file path or hand it to DiarizationWorker.
             recordingJob?.join()
+
+            // join() completes the same way for a job that failed as for one that finished
+            // cleanly, so ask explicitly. If the capture loop failed this recording it has already
+            // marked it ERROR and handed back the controller; continuing here would resurrect it
+            // as PROCESSING and enqueue diarization over a WAV that was never finished.
+            if (failedSessionId == id) return@launch
 
             container.sessionRepository.markProcessing(
                 id, endTime, durationMs,
