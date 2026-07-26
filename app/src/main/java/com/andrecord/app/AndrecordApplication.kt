@@ -12,6 +12,7 @@ import com.andrecord.app.data.AndrecordDatabase
 import com.andrecord.app.data.SessionRepository
 import com.andrecord.app.diarization.DiarizationEngine
 import com.andrecord.app.diarization.SherpaOnnxDiarizationEngine
+import com.andrecord.app.recording.AndroidRecordingServiceStarter
 import com.andrecord.app.recording.RecordingController
 import com.andrecord.app.workers.RetentionWorker
 import java.io.File
@@ -44,6 +45,7 @@ class AndrecordApplication : Application(), Configuration.Provider {
         container = AppContainer(this)
         container.streamingAsrEngine = SherpaOnnxStreamingAsrEngine(this)
         container.diarizationEngine = SherpaOnnxDiarizationEngine(this)
+        container.recordingController = RecordingController(container.sessionRepository, AndroidRecordingServiceStarter(this))
         scheduleRetention()
     }
 
