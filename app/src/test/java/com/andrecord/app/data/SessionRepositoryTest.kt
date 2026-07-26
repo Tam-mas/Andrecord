@@ -55,6 +55,62 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `reconcileInterruptedSessions marks only stuck RECORDING sessions as errored`() = runTest {
+        val (repo, db) = buildRepo()
+        repo.createSession("stuck", startTime = 1000L)
+        repo.createSession("processing", startTime = 1000L)
+        repo.markProcessing("processing", endTime = 5000L, durationMs = 4000L, audioFilePath = "/audio/p.wav", audioDeleteAt = 9_000_000L)
+        repo.createSession("ready", startTime = 1000L)
+        repo.finalizeReady("ready", speakerCount = 2)
+
+        repo.reconcileInterruptedSessions()
+
+        val stuck = db.sessionDao().getById("stuck")
+        assertEquals(SessionStatus.ERROR, stuck?.status)
+        assertTrue(stuck?.title?.contains("Interrupted") == true)
+        assertEquals(SessionStatus.PROCESSING, db.sessionDao().getById("processing")?.status)
+        assertEquals(SessionStatus.READY, db.sessionDao().getById("ready")?.status)
+        db.close()
+    }
+
+    @Test
+    fun `reconcileInterruptedSessions is a no-op on a second run`() = runTest {
+        val (repo, db) = buildRepo()
+        repo.createSession("stuck", startTime = 1000L)
+
+        repo.reconcileInterruptedSessions()
+        val afterFirst = db.sessionDao().getById("stuck")?.title
+        repo.reconcileInterruptedSessions()
+
+        assertEquals(afterFirst, db.sessionDao().getById("stuck")?.title)
+        db.close()
+    }
+
+    @Test
+    fun `replaceSegments swaps a session's segments without touching other sessions`() = runTest {
+        val (repo, db) = buildRepo()
+        repo.createSession("s1", startTime = 1000L)
+        repo.createSession("s2", startTime = 1000L)
+        repo.appendSegments(
+            listOf(
+                TranscriptSegment(sessionId = "s1", startMs = 0, endMs = 100, speakerLabel = null, text = "old"),
+                TranscriptSegment(sessionId = "s2", startMs = 0, endMs = 100, speakerLabel = null, text = "other")
+            )
+        )
+
+        repo.replaceSegments(
+            "s1",
+            listOf(TranscriptSegment(sessionId = "s1", startMs = 0, endMs = 100, speakerLabel = "Speaker 1", text = "old"))
+        )
+
+        val s1 = repo.getSegmentsOnce("s1")
+        assertEquals(1, s1.size)
+        assertEquals("Speaker 1", s1[0].speakerLabel)
+        assertEquals(1, repo.getSegmentsOnce("s2").size)
+        db.close()
+    }
+
+    @Test
     fun `rename updates title`() = runTest {
         val (repo, db) = buildRepo()
         repo.createSession("s1", startTime = 1000L)

@@ -24,6 +24,9 @@ interface SessionDao {
     @Query("SELECT * FROM sessions ORDER BY startTime DESC")
     suspend fun getAllOnce(): List<Session>
 
+    @Query("SELECT * FROM sessions WHERE status = :status")
+    suspend fun getByStatus(status: SessionStatus): List<Session>
+
     @Query("SELECT * FROM sessions WHERE audioFilePath IS NOT NULL AND audioDeleteAt IS NOT NULL AND audioDeleteAt < :now")
     suspend fun getSessionsWithExpiredAudio(now: Long): List<Session>
 
