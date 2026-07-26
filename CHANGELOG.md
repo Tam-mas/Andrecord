@@ -1,5 +1,12 @@
 # Changelog
 
+### [2026-07-26 20:20] Added
+
+**Tech:** `app/src/main/java/com/andrecord/app/ui/list/{SessionListViewModel,SessionListScreen}.kt` — session list screen with record FAB and per-session speaker timeline strips
+**Dev:** `segmentsBySession` uses `sessions.flatMapLatest { combine(sessionList.map { repository.observeSegments(it.id) }) { ... } }` rather than the design's original nested-`collect`/`channelFlow` sketch — that sketch had a real bug: nesting a non-completing inner `collect` inside an outer one means the outer lambda never returns, so a later emission from `sessions` (e.g. a newly created session) would never be observed. `flatMapLatest` correctly cancels and resubscribes the combined segments flow whenever the session list itself changes. Also fixed `SessionRow`'s root `Column` from `fillMaxSize()` to `fillMaxWidth()` — inside a `LazyColumn` item, `fillMaxSize()` would make each row greedily claim the full remaining scroll height instead of sizing to its content. Added `androidx.compose.material:material-icons-extended` (Icons.Filled.Mic/Stop live in the extended icon set, not the core one bundled with material3) and bumped Gradle's daemon heap (`org.gradle.jvmargs=-Xmx4096m`) after the default 512MB heap was thrashing/crashing the build on this larger dependency set.
+**Plain:** You can now see your list of recorded sessions, each with a speaker timeline strip and a button to start or stop a new recording.
+**Why:** This is the first screen you'll actually see and use — getting the list to correctly show new sessions as they're created (not just the ones that existed when the screen loaded) was worth fixing properly rather than shipping a subtly broken version.
+
 ### [2026-07-26 20:06] Added
 
 **Tech:** `app/src/main/java/com/andrecord/app/ui/components/SpeakerTimelineStrip.kt` — pure `computeTimelineProportions()` function and `@Composable SpeakerTimelineStrip`; `app/src/test/java/com/andrecord/app/ui/components/TimelineProportionsTest.kt` — TDD unit tests

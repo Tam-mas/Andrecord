@@ -46,6 +46,10 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.material3:material3")
+    // material-icons-core (bundled transitively via material3) only ships a small curated
+    // subset of icons; Icons.Filled.Mic / Icons.Filled.Stop used by SessionListScreen live in
+    // the extended set.
+    implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.compose.material3.adaptive:adaptive:1.0.0")
     implementation("androidx.compose.material3.adaptive:adaptive-layout:1.0.0")
     implementation("androidx.compose.material3.adaptive:adaptive-navigation:1.0.0")
