@@ -31,8 +31,12 @@ class SessionDetailViewModel(
         viewModelScope.launch { repository.delete(sessionId) }
     }
 
-    fun buildShareText(): String =
-        segments.value.joinToString("\n\n") { seg ->
-            "[${seg.speakerLabel ?: "Unknown"}] ${seg.text}"
-        }
+    fun buildShareText(): String = buildShareText(segments.value)
+
+    companion object {
+        fun buildShareText(segments: List<TranscriptSegment>): String =
+            segments.joinToString("\n\n") { seg ->
+                "[${seg.speakerLabel ?: "Unknown"}] ${seg.text}"
+            }
+    }
 }
