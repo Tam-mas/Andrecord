@@ -1,5 +1,12 @@
 # Changelog
 
+### [2026-07-26 20:06] Added
+
+**Tech:** `app/src/main/java/com/andrecord/app/ui/components/SpeakerTimelineStrip.kt` — pure `computeTimelineProportions()` function and `@Composable SpeakerTimelineStrip`; `app/src/test/java/com/andrecord/app/ui/components/TimelineProportionsTest.kt` — TDD unit tests
+**Dev:** Built TDD (red: unresolved reference, green: 2/2 tests pass). `computeTimelineProportions()` merges adjacent same-speaker segments and computes each merged segment's fraction of total duration; handles empty input and any `TranscriptSegment` start/end timestamps by computing duration from first-to-last. `SpeakerTimelineStrip` renders as a horizontal 6dp strip with rounded corners, dividing space proportionally by speaker via `fillMaxWidth(fraction)`. Speaker color mapped via `speakerIndexFromLabel()` (strips "Speaker " prefix, converts to 0-indexed integer) and `speakerColorFor(index)`, falling back to `Ink600` for null/unparseable labels. Composed as Row of nested Rows to let each segment inherit its fraction-width constraint; tested via unit tests only (no Compose preview or instrumented test added).
+**Plain:** The app now displays a visual timeline strip showing who spoke when in each meeting, with different colors for each speaker.
+**Why:** A speaker timeline at a glance tells you the shape of the conversation — who dominated, where the handoffs were — without reading the whole transcript. It's the signature visual element that makes a speaker-aware recording feel like a real finished product.
+
 ### [2026-07-26 20:05] Added
 
 **Tech:** `app/src/main/java/com/andrecord/app/ui/theme/{Color,Theme,Type}.kt`, `app/src/main/res/font/{space_grotesk,source_serif4,ibm_plex_mono}.ttf` — Compose `MaterialTheme` with bundled local font resources
