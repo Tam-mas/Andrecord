@@ -15,6 +15,7 @@ import com.andrecord.app.diarization.SherpaOnnxDiarizationEngine
 import com.andrecord.app.recording.AndroidRecordingServiceStarter
 import com.andrecord.app.recording.LiveTranscriptState
 import com.andrecord.app.recording.RecordingController
+import com.andrecord.app.settings.AppSettings
 import com.andrecord.app.workers.RetentionWorker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -33,6 +34,7 @@ class AppContainer(app: Application) {
 
     val accessibilityServiceStatus = AccessibilityServiceStatus(app)
     val liveTranscriptState = LiveTranscriptState()
+    val appSettings = AppSettings(app)
 
     lateinit var streamingAsrEngine: StreamingAsrEngine
     lateinit var diarizationEngine: DiarizationEngine
