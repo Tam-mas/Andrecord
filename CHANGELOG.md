@@ -1,5 +1,12 @@
 # Changelog
 
+### [2026-07-26 18:55] Added
+
+**Tech:** `app/src/main/java/com/andrecord/app/workers/DiarizationWorker.kt` — `CoroutineWorker` that aligns ASR transcript segments with speaker diarization results and posts a "transcript ready" notification
+**Dev:** Extracts pure logic into `runDiarization()` companion function (testable without WorkManager boilerplate) that pulls pending ASR segments from `AppContainer`, diarizes the WAV via `DiarizationEngine`, aligns via `TranscriptAligner`, appends to repository, and finalizes session with speaker count. Notification includes duration in minutes and start time (e.g. "5-minute meeting transcript ready / Started 2:30 PM"). Retries up to 3 times; on exhaustion, finalizes soft-fail so session remains usable even if diarization fails.
+**Plain:** When a recording stops, the app automatically runs speaker detection and combines it with the transcript in the background, then notifies you when it's ready.
+**Why:** This is the final piece that turns recording into a complete, usable transcript with speakers labeled — wanted the notification to show useful info (length, start time) so you know which meeting it was without opening the app.
+
 ### [2026-07-26 18:50] Added
 
 **Tech:** `app/src/main/java/com/andrecord/app/diarization/SherpaOnnxDiarizationEngine.kt` — implements `DiarizationEngine` using sherpa-onnx's `OfflineSpeakerDiarization` JNI API (pyannote segmentation-3.0 + ERes2Net English/VoxCeleb speaker embedding model); wired into `AndrecordApplication.onCreate()` via `container.diarizationEngine`
