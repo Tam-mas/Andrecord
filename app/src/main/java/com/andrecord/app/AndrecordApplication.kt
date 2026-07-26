@@ -1,14 +1,19 @@
 package com.andrecord.app
 
 import android.app.Application
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
 import com.andrecord.app.asr.AsrEvent
 import com.andrecord.app.asr.StreamingAsrEngine
 import com.andrecord.app.data.AndrecordDatabase
 import com.andrecord.app.data.SessionRepository
 import com.andrecord.app.diarization.DiarizationEngine
 import com.andrecord.app.recording.RecordingController
+import com.andrecord.app.workers.RetentionWorker
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 
 class AppContainer(app: Application) {
     private val database = AndrecordDatabase.build(app)
@@ -20,9 +25,6 @@ class AppContainer(app: Application) {
 
     val pendingAsrSegments = ConcurrentHashMap<String, MutableList<AsrEvent.Final>>()
 
-    // Assigned by later tasks once their concrete implementations exist:
-    // streamingAsrEngine by the sherpa-onnx streaming ASR task, diarizationEngine by the
-    // sherpa-onnx diarization task, recordingController by the RecordingService task.
     lateinit var streamingAsrEngine: StreamingAsrEngine
     lateinit var diarizationEngine: DiarizationEngine
     lateinit var recordingController: RecordingController
@@ -34,5 +36,17 @@ class AndrecordApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         container = AppContainer(this)
+        scheduleRetention()
+    }
+
+    private fun scheduleRetention() {
+        try {
+            val request = PeriodicWorkRequestBuilder<RetentionWorker>(1, TimeUnit.DAYS).build()
+            WorkManager.getInstance(this).enqueueUniquePeriodicWork(
+                "audio_retention", ExistingPeriodicWorkPolicy.KEEP, request
+            )
+        } catch (e: IllegalStateException) {
+            // WorkManager not initialized (typically in unit tests)
+        }
     }
 }
