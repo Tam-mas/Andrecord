@@ -8,8 +8,10 @@ import com.andrecord.app.data.SessionRepository
 import com.andrecord.app.data.SessionStatus
 import com.andrecord.app.diarization.DiarizationEngine
 import com.andrecord.app.diarization.SpeakerSegment
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -38,7 +40,12 @@ class DiarizationWorkerLogicTest {
         assertEquals(1, speakerCount)
         assertEquals(SessionStatus.READY, db.sessionDao().getById("s1")?.status)
         assertEquals(1, db.sessionDao().getById("s1")?.speakerCount)
-        val segments = db.transcriptSegmentDao().getForSession("s1")
+
+        val segments = db.transcriptSegmentDao().getForSession("s1").first()
+        assertEquals(1, segments.size)
+        assertTrue(segments[0].text.isNotEmpty())
+        assertEquals("hi there", segments[0].text)
+
         db.close()
     }
 }

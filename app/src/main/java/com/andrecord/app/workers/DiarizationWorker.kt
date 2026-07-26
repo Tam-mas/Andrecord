@@ -23,7 +23,7 @@ class DiarizationWorker(context: Context, params: WorkerParameters) : CoroutineW
         val wavFilePath = inputData.getString(KEY_WAV_PATH) ?: return Result.failure()
 
         val container = (applicationContext as AndrecordApplication).container
-        val pendingAsrSegments = container.pendingAsrSegments.remove(sessionId).orEmpty()
+        val pendingAsrSegments = container.pendingAsrSegments[sessionId].orEmpty()
 
         val speakerCount = try {
             runDiarization(container.sessionRepository, container.diarizationEngine, sessionId, wavFilePath, pendingAsrSegments)
@@ -36,12 +36,14 @@ class DiarizationWorker(context: Context, params: WorkerParameters) : CoroutineW
             // whole doWork() on RETRY); if we already retried, fail soft so the session is still usable.
             if (runAttemptCount >= MAX_ATTEMPTS) {
                 container.sessionRepository.finalizeReady(sessionId, speakerCount = null)
+                container.pendingAsrSegments.remove(sessionId)
                 notifyReady(sessionId)
                 return Result.success()
             }
             return Result.retry()
         }
 
+        container.pendingAsrSegments.remove(sessionId)
         notifyReady(sessionId)
         return Result.success()
     }
