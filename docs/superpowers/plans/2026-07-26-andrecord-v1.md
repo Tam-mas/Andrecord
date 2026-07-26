@@ -216,7 +216,6 @@ and in `app/build.gradle.kts` plugins block:
     <!-- Deliberately no INTERNET permission: this app is fully on-device. -->
 
     <application
-        android:name=".AndrecordApplication"
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
@@ -234,6 +233,8 @@ and in `app/build.gradle.kts` plugins block:
     </application>
 </manifest>
 ```
+
+No `android:name` on `<application>` yet — the custom `AndrecordApplication` class doesn't exist until Task 5. Robolectric instantiates the default `android.app.Application` for tests until then, which is correct: nothing before Task 5 needs it. Task 5 adds `android:name=".AndrecordApplication"` once the class exists.
 
 - [ ] **Step 6: Create `app/src/main/res/values/strings.xml`**
 
@@ -836,17 +837,21 @@ git commit -m "Add ASR/diarization interfaces and transcript alignment logic"
 
 ---
 
-### Task 5: RecordingController (state machine)
+### Task 5: RecordingController (state machine) + AppContainer/AndrecordApplication bootstrap
 
 **Files:**
 - Create: `app/src/main/java/com/andrecord/app/recording/RecordingState.kt`
 - Create: `app/src/main/java/com/andrecord/app/recording/RecordingServiceStarter.kt`
 - Create: `app/src/main/java/com/andrecord/app/recording/RecordingController.kt`
 - Test: `app/src/test/java/com/andrecord/app/recording/RecordingControllerTest.kt`
+- Create: `app/src/main/java/com/andrecord/app/AndrecordApplication.kt`
+- Modify: `app/src/main/AndroidManifest.xml` (register the Application class)
 
 **Interfaces:**
 - Consumes: `SessionRepository` (Task 3)
-- Produces: `RecordingState` enum (`IDLE`, `RECORDING`), `RecordingServiceStarter` interface (`fun startRecording(sessionId: String)`, `fun stopRecording()`), `RecordingController(repository: SessionRepository, serviceStarter: RecordingServiceStarter, idGenerator: () -> String = { java.util.UUID.randomUUID().toString() }, clock: () -> Long = { System.currentTimeMillis() })` with `suspend fun toggle(): RecordingState`, `fun currentState(): RecordingState`.
+- Produces: `RecordingState` enum (`IDLE`, `RECORDING`), `RecordingServiceStarter` interface (`fun startRecording(sessionId: String)`, `fun stopRecording()`), `RecordingController(repository: SessionRepository, serviceStarter: RecordingServiceStarter, idGenerator: () -> String = { java.util.UUID.randomUUID().toString() }, clock: () -> Long = { System.currentTimeMillis() })` with `suspend fun toggle(): RecordingState`, `fun currentState(): RecordingState`. Also produces `AppContainer(app: Application)` with `val sessionRepository: SessionRepository`, `val pendingAsrSegments: ConcurrentHashMap<String, MutableList<AsrEvent.Final>>`, and three fields later tasks assign — `lateinit var streamingAsrEngine: StreamingAsrEngine` (assigned in the sherpa-onnx ASR task), `lateinit var diarizationEngine: DiarizationEngine` (assigned in the sherpa-onnx diarization task), `lateinit var recordingController: RecordingController` (assigned in the RecordingService task) — and `AndrecordApplication` with `lateinit var container: AppContainer`.
+
+**Why AppContainer is bootstrapped here, incomplete:** `StreamingAsrEngine` and `DiarizationEngine` are interfaces that already exist (Task 4), and `RecordingController` exists as of this task, so `AppContainer` can declare fields of those types right now even though their *concrete* implementations (`SherpaOnnxStreamingAsrEngine`, `SherpaOnnxDiarizationEngine`, the real wired `RecordingController`) don't exist until later tasks. Declaring them as `lateinit var` lets every later task (`RetentionWorker`, `DiarizationWorker`, the sherpa-onnx integrations, `RecordingService`, both triggers) safely compile against `(applicationContext as AndrecordApplication).container` from the moment each is written, instead of the whole module being unable to compile until one big wiring task at the end.
 
 - [ ] **Step 1: Write the failing controller test**
 
@@ -995,6 +1000,71 @@ git add app/src/main/java/com/andrecord/app/recording/RecordingState.kt app/src/
 git commit -m "Add RecordingController state machine"
 ```
 
+- [ ] **Step 8: Implement `AndrecordApplication.kt`**
+
+```kotlin
+package com.andrecord.app
+
+import android.app.Application
+import com.andrecord.app.asr.AsrEvent
+import com.andrecord.app.asr.StreamingAsrEngine
+import com.andrecord.app.data.AndrecordDatabase
+import com.andrecord.app.data.SessionRepository
+import com.andrecord.app.diarization.DiarizationEngine
+import com.andrecord.app.recording.RecordingController
+import java.io.File
+import java.util.concurrent.ConcurrentHashMap
+
+class AppContainer(app: Application) {
+    private val database = AndrecordDatabase.build(app)
+
+    val sessionRepository = SessionRepository(
+        database.sessionDao(),
+        database.transcriptSegmentDao()
+    ) { path -> File(path).delete() }
+
+    val pendingAsrSegments = ConcurrentHashMap<String, MutableList<AsrEvent.Final>>()
+
+    // Assigned by later tasks once their concrete implementations exist:
+    // streamingAsrEngine by the sherpa-onnx streaming ASR task, diarizationEngine by the
+    // sherpa-onnx diarization task, recordingController by the RecordingService task.
+    lateinit var streamingAsrEngine: StreamingAsrEngine
+    lateinit var diarizationEngine: DiarizationEngine
+    lateinit var recordingController: RecordingController
+}
+
+class AndrecordApplication : Application() {
+    lateinit var container: AppContainer
+
+    override fun onCreate() {
+        super.onCreate()
+        container = AppContainer(this)
+    }
+}
+```
+
+- [ ] **Step 9: Register the Application class in `AndroidManifest.xml`**
+
+Add `android:name=".AndrecordApplication"` to the `<application>` tag (it currently has no `android:name` attribute):
+
+```xml
+    <application
+        android:name=".AndrecordApplication"
+        android:allowBackup="false"
+```
+
+- [ ] **Step 10: Verify everything still compiles and passes**
+
+Run: `./gradlew :app:testDebugUnitTest`
+Expected: `BUILD SUCCESSFUL`, all tests from Tasks 2, 3, and this task PASS. (Robolectric now instantiates the real `AndrecordApplication` for every test — expected and harmless; `AppContainer`'s `sessionRepository` here is unused by those tests, which each build their own in-memory Room database directly.)
+
+- [ ] **Step 11: Commit**
+
+```bash
+git add app/src/main/java/com/andrecord/app/AndrecordApplication.kt app/src/main/AndroidManifest.xml
+git commit -m "Bootstrap AndrecordApplication and AppContainer"
+```
+
 ---
 
 ### Task 6: RetentionWorker
@@ -1002,9 +1072,10 @@ git commit -m "Add RecordingController state machine"
 **Files:**
 - Create: `app/src/main/java/com/andrecord/app/workers/RetentionWorker.kt`
 - Test: `app/src/test/java/com/andrecord/app/workers/RetentionWorkerLogicTest.kt`
+- Modify: `app/src/main/java/com/andrecord/app/AndrecordApplication.kt` (schedule the periodic job)
 
 **Interfaces:**
-- Consumes: `SessionRepository.deleteExpiredAudio(now: Long)` (Task 3)
+- Consumes: `SessionRepository.deleteExpiredAudio(now: Long)` (Task 3), `AndrecordApplication.container` (Task 5)
 - Produces: `RetentionWorker(context, params)` extends `CoroutineWorker`; the pure scheduling/logic is exposed via a standalone testable function `RetentionWorker.Companion.runRetention(repository: SessionRepository, now: Long)` so the test doesn't need `WorkerParameters` boilerplate.
 
 - [ ] **Step 1: Write the failing test**
@@ -1080,25 +1151,381 @@ class RetentionWorker(context: Context, params: WorkerParameters) : CoroutineWor
 Run: `./gradlew :app:testDebugUnitTest --tests "com.andrecord.app.workers.RetentionWorkerLogicTest"`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Schedule the periodic job in `AndrecordApplication.onCreate()`**
 
-```bash
-git add app/src/main/java/com/andrecord/app/workers/RetentionWorker.kt app/src/test/java/com/andrecord/app/workers/RetentionWorkerLogicTest.kt
-git commit -m "Add RetentionWorker with testable retention logic"
+Update `AndrecordApplication.kt` (from Task 5) to schedule retention on startup:
+
+```kotlin
+package com.andrecord.app
+
+import android.app.Application
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
+import com.andrecord.app.asr.AsrEvent
+import com.andrecord.app.asr.StreamingAsrEngine
+import com.andrecord.app.data.AndrecordDatabase
+import com.andrecord.app.data.SessionRepository
+import com.andrecord.app.diarization.DiarizationEngine
+import com.andrecord.app.recording.RecordingController
+import com.andrecord.app.workers.RetentionWorker
+import java.io.File
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
+
+class AppContainer(app: Application) {
+    private val database = AndrecordDatabase.build(app)
+
+    val sessionRepository = SessionRepository(
+        database.sessionDao(),
+        database.transcriptSegmentDao()
+    ) { path -> File(path).delete() }
+
+    val pendingAsrSegments = ConcurrentHashMap<String, MutableList<AsrEvent.Final>>()
+
+    lateinit var streamingAsrEngine: StreamingAsrEngine
+    lateinit var diarizationEngine: DiarizationEngine
+    lateinit var recordingController: RecordingController
+}
+
+class AndrecordApplication : Application() {
+    lateinit var container: AppContainer
+
+    override fun onCreate() {
+        super.onCreate()
+        container = AppContainer(this)
+        scheduleRetention()
+    }
+
+    private fun scheduleRetention() {
+        val request = PeriodicWorkRequestBuilder<RetentionWorker>(1, TimeUnit.DAYS).build()
+        WorkManager.getInstance(this).enqueueUniquePeriodicWork(
+            "audio_retention", ExistingPeriodicWorkPolicy.KEEP, request
+        )
+    }
+}
 ```
 
-*(Note: this task references `AndrecordApplication.container` — implemented in Task 12. The worker class compiles once Task 12 lands; the logic test above only depends on `SessionRepository` and passes independently.)*
+(This is the full file, replacing the version from Task 5 Step 8 — the only change is the `scheduleRetention()` call and function.)
+
+- [ ] **Step 6: Run the full unit test suite**
+
+Run: `./gradlew :app:testDebugUnitTest`
+Expected: `BUILD SUCCESSFUL`, all tests PASS
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add app/src/main/java/com/andrecord/app/workers/RetentionWorker.kt app/src/test/java/com/andrecord/app/workers/RetentionWorkerLogicTest.kt app/src/main/java/com/andrecord/app/AndrecordApplication.kt
+git commit -m "Add RetentionWorker and schedule daily retention cleanup"
+```
 
 ---
 
-### Task 7: DiarizationWorker
+### Task 7: sherpa-onnx streaming ASR integration
+
+**Files:**
+- Create: `app/libs/` (drop location for the vendored AAR)
+- Create: `app/src/main/java/com/andrecord/app/asr/SherpaOnnxStreamingAsrEngine.kt`
+- Create: `app/src/androidTest/java/com/andrecord/app/asr/SherpaOnnxStreamingAsrEngineSmokeTest.kt`
+- Modify: `app/src/main/java/com/andrecord/app/AndrecordApplication.kt` (assign `container.streamingAsrEngine`)
+
+**Interfaces:**
+- Consumes: `StreamingAsrEngine`, `AsrEvent` (Task 4), `AppContainer` (Task 5)
+- Produces: `SherpaOnnxStreamingAsrEngine(context: Context) : StreamingAsrEngine`
+
+This task integrates a real third-party native library, so it is verified with an on-device smoke test rather than a red/green unit test — sherpa-onnx's JNI code cannot run under Robolectric.
+
+- [ ] **Step 1: Vendor the sherpa-onnx Android AAR**
+
+Go to https://github.com/k2-fsa/sherpa-onnx/releases and download the latest Android release asset (look for a filename containing `android` — it bundles `sherpa-onnx.aar` with the JNI `.so` files for `arm64-v8a`, which is what the Pixel 10 Pro Fold uses). Extract `sherpa-onnx.aar` into `app/libs/sherpa-onnx.aar`. The dependency wiring for `app/libs/*.aar` is already in `app/build.gradle.kts` from Task 1 Step 4.
+
+- [ ] **Step 2: Download and bundle the streaming ASR model**
+
+From the same repo's model documentation, get a streaming Zipformer English transducer model (encoder/decoder/joiner ONNX files + `tokens.txt`). Rename and place them at:
+- `app/src/main/assets/models/asr/encoder.onnx`
+- `app/src/main/assets/models/asr/decoder.onnx`
+- `app/src/main/assets/models/asr/joiner.onnx`
+- `app/src/main/assets/models/asr/tokens.txt`
+
+- [ ] **Step 3: Implement `SherpaOnnxStreamingAsrEngine.kt`**
+
+```kotlin
+package com.andrecord.app.asr
+
+import android.content.Context
+import com.k2fsa.sherpa.onnx.OnlineRecognizer
+import com.k2fsa.sherpa.onnx.OnlineRecognizerConfig
+import com.k2fsa.sherpa.onnx.OnlineStream
+import com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig
+import java.util.concurrent.ConcurrentLinkedQueue
+
+class SherpaOnnxStreamingAsrEngine(private val context: Context) : StreamingAsrEngine {
+
+    private lateinit var recognizer: OnlineRecognizer
+    private lateinit var stream: OnlineStream
+    private val pendingEvents = ConcurrentLinkedQueue<AsrEvent>()
+    private var samplesProcessed = 0L
+    private var lastEmittedText = ""
+    private var segmentStartMs = 0L
+
+    override fun start() {
+        val config = OnlineRecognizerConfig(
+            modelConfig = OnlineTransducerModelConfig(
+                encoder = assetPath("models/asr/encoder.onnx"),
+                decoder = assetPath("models/asr/decoder.onnx"),
+                joiner = assetPath("models/asr/joiner.onnx"),
+            ),
+            tokens = assetPath("models/asr/tokens.txt"),
+        )
+        recognizer = OnlineRecognizer(assetManager = context.assets, config = config)
+        stream = recognizer.createStream()
+        samplesProcessed = 0L
+        lastEmittedText = ""
+        segmentStartMs = 0L
+    }
+
+    override fun acceptWaveform(samples: FloatArray) {
+        stream.acceptWaveform(samples, sampleRate = SAMPLE_RATE)
+        samplesProcessed += samples.size
+        while (recognizer.isReady(stream)) {
+            recognizer.decode(stream)
+        }
+        val text = recognizer.getResult(stream).text
+        val nowMs = (samplesProcessed * 1000L) / SAMPLE_RATE
+
+        if (recognizer.isEndpoint(stream)) {
+            if (text.isNotBlank()) {
+                pendingEvents.add(AsrEvent.Final(startMs = segmentStartMs, endMs = nowMs, text = text))
+            }
+            recognizer.reset(stream)
+            segmentStartMs = nowMs
+            lastEmittedText = ""
+        } else if (text != lastEmittedText) {
+            lastEmittedText = text
+            pendingEvents.add(AsrEvent.Partial(text))
+        }
+    }
+
+    override fun poll(): AsrEvent? = pendingEvents.poll()
+
+    override fun stop() {
+        stream.release()
+        recognizer.release()
+    }
+
+    private fun assetPath(path: String) = path
+
+    companion object {
+        const val SAMPLE_RATE = 16000
+    }
+}
+```
+
+- [ ] **Step 4: Write an on-device smoke test**
+
+```kotlin
+package com.andrecord.app.asr
+
+import androidx.test.core.app.ApplicationProvider
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import org.junit.runner.RunWith
+
+@RunWith(AndroidJUnit4::class)
+class SherpaOnnxStreamingAsrEngineSmokeTest {
+
+    @Test
+    fun `recognizes non-empty text from a short spoken test clip`() {
+        // Record a 3-5 second WAV of yourself saying a short sentence and place it at
+        // app/src/androidTest/assets/test_clip_16k_mono.wav before running this test.
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val engine = SherpaOnnxStreamingAsrEngine(context)
+        engine.start()
+
+        val samples = readTestClipAsFloatPcm(context)
+        val chunkSize = 1600 // 100ms chunks at 16kHz
+        val collected = StringBuilder()
+        for (i in samples.indices step chunkSize) {
+            val chunk = samples.copyOfRange(i, minOf(i + chunkSize, samples.size))
+            engine.acceptWaveform(chunk)
+            var event = engine.poll()
+            while (event != null) {
+                if (event is AsrEvent.Final) collected.append(event.text).append(" ")
+                event = engine.poll()
+            }
+        }
+        engine.stop()
+
+        assertTrue("Expected non-empty transcript, got: '$collected'", collected.isNotBlank())
+    }
+
+    private fun readTestClipAsFloatPcm(context: android.content.Context): FloatArray {
+        context.assets.open("test_clip_16k_mono.wav").use { input ->
+            val bytes = input.readBytes()
+            val pcmBytes = bytes.copyOfRange(44, bytes.size) // skip the 44-byte WAV header
+            val samples = FloatArray(pcmBytes.size / 2)
+            for (i in samples.indices) {
+                val lo = pcmBytes[i * 2].toInt() and 0xFF
+                val hi = pcmBytes[i * 2 + 1].toInt()
+                val sample = (hi shl 8) or lo
+                samples[i] = sample / 32768.0f
+            }
+            return samples
+        }
+    }
+}
+```
+
+- [ ] **Step 5: Run the smoke test on the Pixel 10 Pro Fold**
+
+Run: `./gradlew :app:connectedDebugAndroidTest --tests "com.andrecord.app.asr.SherpaOnnxStreamingAsrEngineSmokeTest"`
+Expected: PASS, with the printed/collected transcript roughly matching what was said in the test clip
+
+- [ ] **Step 6: Assign `container.streamingAsrEngine` in `AndrecordApplication.onCreate()`**
+
+Add the assignment (and its import) right after `container = AppContainer(this)`:
+
+```kotlin
+        container = AppContainer(this)
+        container.streamingAsrEngine = SherpaOnnxStreamingAsrEngine(this)
+        scheduleRetention()
+```
+
+Add `import com.andrecord.app.asr.SherpaOnnxStreamingAsrEngine` to `AndrecordApplication.kt`'s import list.
+
+- [ ] **Step 7: Verify the module still compiles**
+
+Run: `./gradlew :app:testDebugUnitTest`
+Expected: `BUILD SUCCESSFUL`, all existing tests still PASS
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add app/libs/sherpa-onnx.aar app/src/main/assets/models/asr app/src/main/java/com/andrecord/app/asr/SherpaOnnxStreamingAsrEngine.kt app/src/androidTest/java/com/andrecord/app/asr app/src/androidTest/assets/test_clip_16k_mono.wav app/src/main/java/com/andrecord/app/AndrecordApplication.kt
+git commit -m "Integrate sherpa-onnx streaming ASR engine"
+```
+
+---
+
+### Task 8: sherpa-onnx offline diarization integration
+
+**Files:**
+- Create: `app/src/main/java/com/andrecord/app/diarization/SherpaOnnxDiarizationEngine.kt`
+- Create: `app/src/androidTest/java/com/andrecord/app/diarization/SherpaOnnxDiarizationEngineSmokeTest.kt`
+- Modify: `app/src/main/java/com/andrecord/app/AndrecordApplication.kt` (assign `container.diarizationEngine`)
+
+**Interfaces:**
+- Consumes: `DiarizationEngine`, `SpeakerSegment` (Task 4), `AppContainer` (Task 5)
+- Produces: `SherpaOnnxDiarizationEngine(context: Context) : DiarizationEngine`
+
+- [ ] **Step 1: Download and bundle the diarization models**
+
+From the sherpa-onnx offline speaker diarization documentation, get a speaker segmentation model and a speaker embedding model. Place them at:
+- `app/src/main/assets/models/diarization/segmentation.onnx`
+- `app/src/main/assets/models/diarization/embedding.onnx`
+
+- [ ] **Step 2: Implement `SherpaOnnxDiarizationEngine.kt`**
+
+```kotlin
+package com.andrecord.app.diarization
+
+import android.content.Context
+import com.k2fsa.sherpa.onnx.OfflineSpeakerDiarization
+import com.k2fsa.sherpa.onnx.OfflineSpeakerDiarizationConfig
+import com.k2fsa.sherpa.onnx.WaveReader
+
+class SherpaOnnxDiarizationEngine(private val context: Context) : DiarizationEngine {
+
+    override fun diarize(wavFilePath: String): List<SpeakerSegment> {
+        val config = OfflineSpeakerDiarizationConfig(
+            segmentationModel = "models/diarization/segmentation.onnx",
+            embeddingModel = "models/diarization/embedding.onnx",
+        )
+        val diarizer = OfflineSpeakerDiarization(assetManager = context.assets, config = config)
+        val wave = WaveReader.readWaveFromFile(wavFilePath)
+        val result = diarizer.process(samples = wave.samples, sampleRate = wave.sampleRate)
+        return result.segments.map {
+            SpeakerSegment(
+                startMs = (it.start * 1000).toLong(),
+                endMs = (it.end * 1000).toLong(),
+                speakerIndex = it.speaker
+            )
+        }
+    }
+}
+```
+
+- [ ] **Step 3: Write an on-device smoke test**
+
+```kotlin
+package com.andrecord.app.diarization
+
+import androidx.test.core.app.ApplicationProvider
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import org.junit.runner.RunWith
+
+@RunWith(AndroidJUnit4::class)
+class SherpaOnnxDiarizationEngineSmokeTest {
+
+    @Test
+    fun `diarizes a two-speaker test clip into at least two speaker segments`() {
+        // Record a short (~20s) two-person conversation WAV (16kHz mono) and place it at
+        // /sdcard/Download/two_speaker_test.wav on the device before running this test.
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val engine = SherpaOnnxDiarizationEngine(context)
+
+        val segments = engine.diarize("/sdcard/Download/two_speaker_test.wav")
+
+        assertTrue("Expected at least 2 distinct speakers, got: ${TranscriptAligner.speakerCount(segments)}",
+            TranscriptAligner.speakerCount(segments) >= 2)
+    }
+}
+```
+
+- [ ] **Step 4: Run the smoke test on the Pixel 10 Pro Fold**
+
+Run: `./gradlew :app:connectedDebugAndroidTest --tests "com.andrecord.app.diarization.SherpaOnnxDiarizationEngineSmokeTest"`
+Expected: PASS
+
+- [ ] **Step 5: Assign `container.diarizationEngine` in `AndrecordApplication.onCreate()`**
+
+Add the assignment (and its import) right after the `streamingAsrEngine` assignment from Task 7:
+
+```kotlin
+        container = AppContainer(this)
+        container.streamingAsrEngine = SherpaOnnxStreamingAsrEngine(this)
+        container.diarizationEngine = SherpaOnnxDiarizationEngine(this)
+        scheduleRetention()
+```
+
+Add `import com.andrecord.app.diarization.SherpaOnnxDiarizationEngine` to `AndrecordApplication.kt`'s import list.
+
+- [ ] **Step 6: Verify the module still compiles**
+
+Run: `./gradlew :app:testDebugUnitTest`
+Expected: `BUILD SUCCESSFUL`, all existing tests still PASS
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add app/src/main/assets/models/diarization app/src/main/java/com/andrecord/app/diarization/SherpaOnnxDiarizationEngine.kt app/src/androidTest/java/com/andrecord/app/diarization app/src/main/java/com/andrecord/app/AndrecordApplication.kt
+git commit -m "Integrate sherpa-onnx offline speaker diarization engine"
+```
+
+---
+
+### Task 9: DiarizationWorker
 
 **Files:**
 - Create: `app/src/main/java/com/andrecord/app/workers/DiarizationWorker.kt`
 - Test: `app/src/test/java/com/andrecord/app/workers/DiarizationWorkerLogicTest.kt`
 
 **Interfaces:**
-- Consumes: `DiarizationEngine`, `TranscriptAligner` (Task 4), `SessionRepository` (Task 3)
+- Consumes: `DiarizationEngine`, `TranscriptAligner` (Task 4), `SessionRepository` (Task 3), `AndrecordApplication.container` — `sessionRepository` and `pendingAsrSegments` since Task 5, `diarizationEngine` since Task 8
 - Produces: `DiarizationWorker.Companion.runDiarization(repository: SessionRepository, engine: DiarizationEngine, sessionId: String, wavFilePath: String, pendingAsrSegments: List<AsrEvent.Final>): Int?` (returns speaker count, or null if diarization failed) — extracted so it's testable without `WorkerParameters`.
 
 - [ ] **Step 1: Write the failing test**
@@ -1260,267 +1687,6 @@ git add app/src/main/java/com/andrecord/app/workers/DiarizationWorker.kt app/src
 git commit -m "Add DiarizationWorker with speaker-count and duration in the ready notification"
 ```
 
-*(Note: like Task 6, the class references `AndrecordApplication.container`, which lands in Task 12 — the `runDiarization` logic under test has no such dependency and passes on its own.)*
-
----
-
-### Task 8: sherpa-onnx streaming ASR integration
-
-**Files:**
-- Create: `app/libs/` (drop location for the vendored AAR)
-- Create: `app/src/main/java/com/andrecord/app/asr/SherpaOnnxStreamingAsrEngine.kt`
-- Create: `app/src/androidTest/java/com/andrecord/app/asr/SherpaOnnxStreamingAsrEngineSmokeTest.kt`
-
-**Interfaces:**
-- Consumes: `StreamingAsrEngine`, `AsrEvent` (Task 4)
-- Produces: `SherpaOnnxStreamingAsrEngine(context: Context) : StreamingAsrEngine`
-
-This task integrates a real third-party native library, so it is verified with an on-device smoke test rather than a red/green unit test — sherpa-onnx's JNI code cannot run under Robolectric.
-
-- [ ] **Step 1: Vendor the sherpa-onnx Android AAR**
-
-Go to https://github.com/k2-fsa/sherpa-onnx/releases and download the latest Android release asset (look for a filename containing `android` — it bundles `sherpa-onnx.aar` with the JNI `.so` files for `arm64-v8a`, which is what the Pixel 10 Pro Fold uses). Extract `sherpa-onnx.aar` into `app/libs/sherpa-onnx.aar`. The dependency wiring for `app/libs/*.aar` is already in `app/build.gradle.kts` from Task 1 Step 4.
-
-- [ ] **Step 2: Download and bundle the streaming ASR model**
-
-From the same repo's model documentation, get a streaming Zipformer English transducer model (encoder/decoder/joiner ONNX files + `tokens.txt`). Rename and place them at:
-- `app/src/main/assets/models/asr/encoder.onnx`
-- `app/src/main/assets/models/asr/decoder.onnx`
-- `app/src/main/assets/models/asr/joiner.onnx`
-- `app/src/main/assets/models/asr/tokens.txt`
-
-- [ ] **Step 3: Implement `SherpaOnnxStreamingAsrEngine.kt`**
-
-```kotlin
-package com.andrecord.app.asr
-
-import android.content.Context
-import com.k2fsa.sherpa.onnx.OnlineRecognizer
-import com.k2fsa.sherpa.onnx.OnlineRecognizerConfig
-import com.k2fsa.sherpa.onnx.OnlineStream
-import com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig
-import java.util.concurrent.ConcurrentLinkedQueue
-
-class SherpaOnnxStreamingAsrEngine(private val context: Context) : StreamingAsrEngine {
-
-    private lateinit var recognizer: OnlineRecognizer
-    private lateinit var stream: OnlineStream
-    private val pendingEvents = ConcurrentLinkedQueue<AsrEvent>()
-    private var samplesProcessed = 0L
-    private var lastEmittedText = ""
-    private var segmentStartMs = 0L
-
-    override fun start() {
-        val config = OnlineRecognizerConfig(
-            modelConfig = OnlineTransducerModelConfig(
-                encoder = assetPath("models/asr/encoder.onnx"),
-                decoder = assetPath("models/asr/decoder.onnx"),
-                joiner = assetPath("models/asr/joiner.onnx"),
-            ),
-            tokens = assetPath("models/asr/tokens.txt"),
-        )
-        recognizer = OnlineRecognizer(assetManager = context.assets, config = config)
-        stream = recognizer.createStream()
-        samplesProcessed = 0L
-        lastEmittedText = ""
-        segmentStartMs = 0L
-    }
-
-    override fun acceptWaveform(samples: FloatArray) {
-        stream.acceptWaveform(samples, sampleRate = SAMPLE_RATE)
-        samplesProcessed += samples.size
-        while (recognizer.isReady(stream)) {
-            recognizer.decode(stream)
-        }
-        val text = recognizer.getResult(stream).text
-        val nowMs = (samplesProcessed * 1000L) / SAMPLE_RATE
-
-        if (recognizer.isEndpoint(stream)) {
-            if (text.isNotBlank()) {
-                pendingEvents.add(AsrEvent.Final(startMs = segmentStartMs, endMs = nowMs, text = text))
-            }
-            recognizer.reset(stream)
-            segmentStartMs = nowMs
-            lastEmittedText = ""
-        } else if (text != lastEmittedText) {
-            lastEmittedText = text
-            pendingEvents.add(AsrEvent.Partial(text))
-        }
-    }
-
-    override fun poll(): AsrEvent? = pendingEvents.poll()
-
-    override fun stop() {
-        stream.release()
-        recognizer.release()
-    }
-
-    private fun assetPath(path: String) = path
-
-    companion object {
-        const val SAMPLE_RATE = 16000
-    }
-}
-```
-
-- [ ] **Step 4: Write an on-device smoke test**
-
-```kotlin
-package com.andrecord.app.asr
-
-import androidx.test.core.app.ApplicationProvider
-import androidx.test.ext.junit.runners.AndroidJUnit4
-import org.junit.Assert.assertTrue
-import org.junit.Test
-import org.junit.runner.RunWith
-
-@RunWith(AndroidJUnit4::class)
-class SherpaOnnxStreamingAsrEngineSmokeTest {
-
-    @Test
-    fun `recognizes non-empty text from a short spoken test clip`() {
-        // Record a 3-5 second WAV of yourself saying a short sentence and place it at
-        // app/src/androidTest/assets/test_clip_16k_mono.wav before running this test.
-        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
-        val engine = SherpaOnnxStreamingAsrEngine(context)
-        engine.start()
-
-        val samples = readTestClipAsFloatPcm(context)
-        val chunkSize = 1600 // 100ms chunks at 16kHz
-        val collected = StringBuilder()
-        for (i in samples.indices step chunkSize) {
-            val chunk = samples.copyOfRange(i, minOf(i + chunkSize, samples.size))
-            engine.acceptWaveform(chunk)
-            var event = engine.poll()
-            while (event != null) {
-                if (event is AsrEvent.Final) collected.append(event.text).append(" ")
-                event = engine.poll()
-            }
-        }
-        engine.stop()
-
-        assertTrue("Expected non-empty transcript, got: '$collected'", collected.isNotBlank())
-    }
-
-    private fun readTestClipAsFloatPcm(context: android.content.Context): FloatArray {
-        context.assets.open("test_clip_16k_mono.wav").use { input ->
-            val bytes = input.readBytes()
-            val pcmBytes = bytes.copyOfRange(44, bytes.size) // skip the 44-byte WAV header
-            val samples = FloatArray(pcmBytes.size / 2)
-            for (i in samples.indices) {
-                val lo = pcmBytes[i * 2].toInt() and 0xFF
-                val hi = pcmBytes[i * 2 + 1].toInt()
-                val sample = (hi shl 8) or lo
-                samples[i] = sample / 32768.0f
-            }
-            return samples
-        }
-    }
-}
-```
-
-- [ ] **Step 5: Run the smoke test on the Pixel 10 Pro Fold**
-
-Run: `./gradlew :app:connectedDebugAndroidTest --tests "com.andrecord.app.asr.SherpaOnnxStreamingAsrEngineSmokeTest"`
-Expected: PASS, with the printed/collected transcript roughly matching what was said in the test clip
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add app/libs/sherpa-onnx.aar app/src/main/assets/models/asr app/src/main/java/com/andrecord/app/asr/SherpaOnnxStreamingAsrEngine.kt app/src/androidTest/java/com/andrecord/app/asr app/src/androidTest/assets/test_clip_16k_mono.wav
-git commit -m "Integrate sherpa-onnx streaming ASR engine"
-```
-
----
-
-### Task 9: sherpa-onnx offline diarization integration
-
-**Files:**
-- Create: `app/src/main/java/com/andrecord/app/diarization/SherpaOnnxDiarizationEngine.kt`
-- Create: `app/src/androidTest/java/com/andrecord/app/diarization/SherpaOnnxDiarizationEngineSmokeTest.kt`
-
-**Interfaces:**
-- Consumes: `DiarizationEngine`, `SpeakerSegment` (Task 4)
-- Produces: `SherpaOnnxDiarizationEngine(context: Context) : DiarizationEngine`
-
-- [ ] **Step 1: Download and bundle the diarization models**
-
-From the sherpa-onnx offline speaker diarization documentation, get a speaker segmentation model and a speaker embedding model. Place them at:
-- `app/src/main/assets/models/diarization/segmentation.onnx`
-- `app/src/main/assets/models/diarization/embedding.onnx`
-
-- [ ] **Step 2: Implement `SherpaOnnxDiarizationEngine.kt`**
-
-```kotlin
-package com.andrecord.app.diarization
-
-import android.content.Context
-import com.k2fsa.sherpa.onnx.OfflineSpeakerDiarization
-import com.k2fsa.sherpa.onnx.OfflineSpeakerDiarizationConfig
-import com.k2fsa.sherpa.onnx.WaveReader
-
-class SherpaOnnxDiarizationEngine(private val context: Context) : DiarizationEngine {
-
-    override fun diarize(wavFilePath: String): List<SpeakerSegment> {
-        val config = OfflineSpeakerDiarizationConfig(
-            segmentationModel = "models/diarization/segmentation.onnx",
-            embeddingModel = "models/diarization/embedding.onnx",
-        )
-        val diarizer = OfflineSpeakerDiarization(assetManager = context.assets, config = config)
-        val wave = WaveReader.readWaveFromFile(wavFilePath)
-        val result = diarizer.process(samples = wave.samples, sampleRate = wave.sampleRate)
-        return result.segments.map {
-            SpeakerSegment(
-                startMs = (it.start * 1000).toLong(),
-                endMs = (it.end * 1000).toLong(),
-                speakerIndex = it.speaker
-            )
-        }
-    }
-}
-```
-
-- [ ] **Step 3: Write an on-device smoke test**
-
-```kotlin
-package com.andrecord.app.diarization
-
-import androidx.test.core.app.ApplicationProvider
-import androidx.test.ext.junit.runners.AndroidJUnit4
-import org.junit.Assert.assertTrue
-import org.junit.Test
-import org.junit.runner.RunWith
-
-@RunWith(AndroidJUnit4::class)
-class SherpaOnnxDiarizationEngineSmokeTest {
-
-    @Test
-    fun `diarizes a two-speaker test clip into at least two speaker segments`() {
-        // Record a short (~20s) two-person conversation WAV (16kHz mono) and place it at
-        // /sdcard/Download/two_speaker_test.wav on the device before running this test.
-        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
-        val engine = SherpaOnnxDiarizationEngine(context)
-
-        val segments = engine.diarize("/sdcard/Download/two_speaker_test.wav")
-
-        assertTrue("Expected at least 2 distinct speakers, got: ${TranscriptAligner.speakerCount(segments)}",
-            TranscriptAligner.speakerCount(segments) >= 2)
-    }
-}
-```
-
-- [ ] **Step 4: Run the smoke test on the Pixel 10 Pro Fold**
-
-Run: `./gradlew :app:connectedDebugAndroidTest --tests "com.andrecord.app.diarization.SherpaOnnxDiarizationEngineSmokeTest"`
-Expected: PASS
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add app/src/main/assets/models/diarization app/src/main/java/com/andrecord/app/diarization/SherpaOnnxDiarizationEngine.kt app/src/androidTest/java/com/andrecord/app/diarization
-git commit -m "Integrate sherpa-onnx offline speaker diarization engine"
-```
-
 ---
 
 ### Task 10: RecordingService (foreground service)
@@ -1529,10 +1695,11 @@ git commit -m "Integrate sherpa-onnx offline speaker diarization engine"
 - Create: `app/src/main/java/com/andrecord/app/recording/RecordingService.kt`
 - Modify: `app/src/main/AndroidManifest.xml` (register the service)
 - Create: `app/src/androidTest/java/com/andrecord/app/recording/RecordingServiceInstrumentedTest.kt`
+- Modify: `app/src/main/java/com/andrecord/app/AndrecordApplication.kt` (assign `container.recordingController`)
 
 **Interfaces:**
-- Consumes: `StreamingAsrEngine`, `AsrEvent` (Task 4/8), `SessionRepository` (Task 3), `TranscriptSegment` (Task 2), enqueues `DiarizationWorker` (Task 7)
-- Produces: `RecordingService`, started via `Intent` actions `ACTION_START` (extra `EXTRA_SESSION_ID: String`) and `ACTION_STOP`.
+- Consumes: `StreamingAsrEngine`, `AsrEvent` (Task 4/7), `SessionRepository` (Task 3), `TranscriptSegment` (Task 2), enqueues `DiarizationWorker` (Task 9), `AppContainer`/`RecordingController` (Task 5)
+- Produces: `RecordingService`, started via `Intent` actions `ACTION_START` (extra `EXTRA_SESSION_ID: String`) and `ACTION_STOP`; `AndroidRecordingServiceStarter(context) : RecordingServiceStarter`.
 
 - [ ] **Step 1: Implement `RecordingService.kt`**
 
@@ -1856,11 +2023,32 @@ class RecordingServiceInstrumentedTest {
 Run: `./gradlew :app:connectedDebugAndroidTest --tests "com.andrecord.app.recording.RecordingServiceInstrumentedTest"`
 Expected: test completes without crash; manually confirm `audio/smoke-test-session.wav` exists in app-private storage and the lock-screen notification appeared with a working Stop action while the test ran.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: Assign `container.recordingController` in `AndrecordApplication.onCreate()`**
+
+`AndroidRecordingServiceStarter` (Step 3) can only be referenced now that `RecordingService` exists — this is the last `AppContainer` field to fill in. Add the assignment and its imports:
+
+```kotlin
+        container = AppContainer(this)
+        container.streamingAsrEngine = SherpaOnnxStreamingAsrEngine(this)
+        container.diarizationEngine = SherpaOnnxDiarizationEngine(this)
+        container.recordingController = RecordingController(container.sessionRepository, AndroidRecordingServiceStarter(this))
+        scheduleRetention()
+```
+
+Add `import com.andrecord.app.recording.AndroidRecordingServiceStarter` and `import com.andrecord.app.recording.RecordingController` to `AndrecordApplication.kt`'s import list (`RecordingController` may already be imported since `AppContainer`'s `lateinit var recordingController: RecordingController` field declaration needs it).
+
+Every `AppContainer` field is now assigned in `onCreate()` — `sessionRepository` and `pendingAsrSegments` at construction (Task 5), `streamingAsrEngine` (Task 7), `diarizationEngine` (Task 8), `recordingController` (here).
+
+- [ ] **Step 7: Verify the module still compiles**
+
+Run: `./gradlew :app:testDebugUnitTest`
+Expected: `BUILD SUCCESSFUL`, all existing tests still PASS
+
+- [ ] **Step 8: Commit**
 
 ```bash
-git add app/src/main/java/com/andrecord/app/recording/RecordingService.kt app/src/main/java/com/andrecord/app/recording/RecordingServiceStarter.kt app/src/main/AndroidManifest.xml app/src/androidTest/java/com/andrecord/app/recording
-git commit -m "Add RecordingService foreground service with live ASR and WAV capture"
+git add app/src/main/java/com/andrecord/app/recording/RecordingService.kt app/src/main/java/com/andrecord/app/recording/RecordingServiceStarter.kt app/src/main/AndroidManifest.xml app/src/androidTest/java/com/andrecord/app/recording app/src/main/java/com/andrecord/app/AndrecordApplication.kt
+git commit -m "Add RecordingService foreground service and complete AppContainer wiring"
 ```
 
 ---
@@ -1873,7 +2061,7 @@ git commit -m "Add RecordingService foreground service with live ASR and WAV cap
 - Modify: `app/src/main/AndroidManifest.xml`
 
 **Interfaces:**
-- Consumes: `RecordingController` (Task 5, provided by `AndrecordApplication.container`, wired in Task 12)
+- Consumes: `RecordingController` (Task 5, provided by `AndrecordApplication.container`, fully wired as of Task 10)
 - Produces: an app shortcut with id `toggle_recording` that Quick Tap can be bound to.
 
 - [ ] **Step 1: Create `app/src/main/res/xml/shortcuts.xml`**
@@ -1963,92 +2151,7 @@ git commit -m "Add Quick Tap app shortcut and lock-screen trampoline activity"
 
 ---
 
-### Task 12: AndrecordApplication (AppContainer wiring)
-
-**Files:**
-- Create: `app/src/main/java/com/andrecord/app/AndrecordApplication.kt`
-
-**Interfaces:**
-- Consumes: everything from Tasks 2–9 and 11
-- Produces: `AndrecordApplication.container: AppContainer` with fields `sessionRepository: SessionRepository`, `streamingAsrEngine: StreamingAsrEngine`, `diarizationEngine: DiarizationEngine`, `recordingController: RecordingController`, `pendingAsrSegments: MutableMap<String, MutableList<AsrEvent.Final>>`
-
-This wires together every prior task's real (non-fake) implementation for the first time — this is where the app actually becomes runnable end-to-end.
-
-- [ ] **Step 1: Implement `AndrecordApplication.kt`**
-
-```kotlin
-package com.andrecord.app
-
-import android.app.Application
-import androidx.work.ExistingPeriodicWorkPolicy
-import androidx.work.PeriodicWorkRequestBuilder
-import androidx.work.WorkManager
-import com.andrecord.app.asr.AsrEvent
-import com.andrecord.app.asr.SherpaOnnxStreamingAsrEngine
-import com.andrecord.app.asr.StreamingAsrEngine
-import com.andrecord.app.data.AndrecordDatabase
-import com.andrecord.app.data.SessionRepository
-import com.andrecord.app.diarization.DiarizationEngine
-import com.andrecord.app.diarization.SherpaOnnxDiarizationEngine
-import com.andrecord.app.recording.AndroidRecordingServiceStarter
-import com.andrecord.app.recording.RecordingController
-import com.andrecord.app.workers.RetentionWorker
-import java.io.File
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.TimeUnit
-
-class AppContainer(app: Application) {
-    private val database = AndrecordDatabase.build(app)
-
-    val sessionRepository = SessionRepository(
-        database.sessionDao(),
-        database.transcriptSegmentDao()
-    ) { path -> File(path).delete() }
-
-    val streamingAsrEngine: StreamingAsrEngine = SherpaOnnxStreamingAsrEngine(app)
-    val diarizationEngine: DiarizationEngine = SherpaOnnxDiarizationEngine(app)
-    val recordingController = RecordingController(sessionRepository, AndroidRecordingServiceStarter(app))
-    val pendingAsrSegments = ConcurrentHashMap<String, MutableList<AsrEvent.Final>>()
-}
-
-class AndrecordApplication : Application() {
-    lateinit var container: AppContainer
-
-    override fun onCreate() {
-        super.onCreate()
-        container = AppContainer(this)
-        scheduleRetention()
-    }
-
-    private fun scheduleRetention() {
-        val request = PeriodicWorkRequestBuilder<RetentionWorker>(1, TimeUnit.DAYS).build()
-        WorkManager.getInstance(this).enqueueUniquePeriodicWork(
-            "audio_retention", ExistingPeriodicWorkPolicy.KEEP, request
-        )
-    }
-}
-```
-
-- [ ] **Step 2: Verify the full app compiles**
-
-Run: `./gradlew :app:assembleDebug`
-Expected: `BUILD SUCCESSFUL`
-
-- [ ] **Step 3: Re-run the full unit test suite to confirm Tasks 6/7's deferred references now compile clean**
-
-Run: `./gradlew :app:testDebugUnitTest`
-Expected: all tests PASS
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add app/src/main/java/com/andrecord/app/AndrecordApplication.kt
-git commit -m "Wire AppContainer: real engines, repository, controller, and retention scheduling"
-```
-
----
-
-### Task 13: Volume-key trigger (AccessibilityService)
+### Task 12: Volume-key trigger (AccessibilityService)
 
 **Files:**
 - Create: `app/src/main/res/xml/accessibility_service_config.xml`
@@ -2058,7 +2161,7 @@ git commit -m "Wire AppContainer: real engines, repository, controller, and rete
 - Test: `app/src/test/java/com/andrecord/app/triggers/LongPressDetectorTest.kt`
 
 **Interfaces:**
-- Consumes: `RecordingController` (Task 5/12)
+- Consumes: `RecordingController` (Task 5, provided by `AndrecordApplication.container`, fully wired as of Task 10)
 - Produces: `LongPressDetector(holdMs: Long = 1000L, clock: () -> Long)` — pure hold-duration logic extracted from the service so it's unit-testable — with `fun onKeyDown()`, `fun onKeyUp(): Boolean` (returns true if the hold qualified as a long-press)
 
 - [ ] **Step 1: Write the failing test for the pure long-press logic**
@@ -2221,7 +2324,7 @@ git commit -m "Add long-press Volume Down trigger via AccessibilityService"
 
 ---
 
-### Task 14: Compose theme (colors, typography)
+### Task 13: Compose theme (colors, typography)
 
 **Files:**
 - Create: `app/src/main/java/com/andrecord/app/ui/theme/Color.kt`
@@ -2342,14 +2445,14 @@ git commit -m "Add Andrecord voice-ledger theme: colors, typography"
 
 ---
 
-### Task 15: Speaker timeline strip component
+### Task 14: Speaker timeline strip component
 
 **Files:**
 - Create: `app/src/main/java/com/andrecord/app/ui/components/SpeakerTimelineStrip.kt`
 - Test: `app/src/test/java/com/andrecord/app/ui/components/TimelineProportionsTest.kt`
 
 **Interfaces:**
-- Consumes: `TranscriptSegment` (Task 2), `speakerColorFor` (Task 14)
+- Consumes: `TranscriptSegment` (Task 2), `speakerColorFor` (Task 13)
 - Produces: `computeTimelineProportions(segments: List<TranscriptSegment>): List<Pair<String?, Float>>` (speaker label to fraction-of-total-duration, in chronological order, adjacent-same-speaker runs merged) and `@Composable fun SpeakerTimelineStrip(segments: List<TranscriptSegment>, modifier: Modifier = Modifier)`
 
 - [ ] **Step 1: Write the failing test for the pure proportions logic**
@@ -2458,14 +2561,14 @@ git commit -m "Add speaker timeline strip signature component"
 
 ---
 
-### Task 16: Session list screen
+### Task 15: Session list screen
 
 **Files:**
 - Create: `app/src/main/java/com/andrecord/app/ui/list/SessionListViewModel.kt`
 - Create: `app/src/main/java/com/andrecord/app/ui/list/SessionListScreen.kt`
 
 **Interfaces:**
-- Consumes: `SessionRepository.observeSessions()` / `observeSegments()` (Task 3), `RecordingController` (Task 5), `SpeakerTimelineStrip` (Task 15)
+- Consumes: `SessionRepository.observeSessions()` / `observeSegments()` (Task 3), `RecordingController` (Task 5), `SpeakerTimelineStrip` (Task 14)
 - Produces: `SessionListViewModel(repository, recordingController)` exposing `val sessions: StateFlow<List<Session>>`, `val segmentsBySession: StateFlow<Map<String, List<TranscriptSegment>>>`, `val recordingState: StateFlow<RecordingState>`, `fun onRecordButtonClick()`; `@Composable fun SessionListScreen(viewModel: SessionListViewModel, onSessionClick: (String) -> Unit)`
 
 - [ ] **Step 1: Implement `SessionListViewModel.kt`**
@@ -2613,14 +2716,14 @@ git commit -m "Add session list screen with record FAB and per-session timeline 
 
 ---
 
-### Task 17: Session detail screen
+### Task 16: Session detail screen
 
 **Files:**
 - Create: `app/src/main/java/com/andrecord/app/ui/detail/SessionDetailViewModel.kt`
 - Create: `app/src/main/java/com/andrecord/app/ui/detail/SessionDetailScreen.kt`
 
 **Interfaces:**
-- Consumes: `SessionRepository` (Task 3), `SpeakerTimelineStrip` (Task 15)
+- Consumes: `SessionRepository` (Task 3), `SpeakerTimelineStrip` (Task 14)
 - Produces: `SessionDetailViewModel(repository, sessionId)` exposing `val session: StateFlow<Session?>`, `val segments: StateFlow<List<TranscriptSegment>>`, `fun rename(newTitle: String)`, `fun delete()`, `fun buildShareText(): String`; `@Composable fun SessionDetailScreen(viewModel: SessionDetailViewModel, onDeleted: () -> Unit)`
 
 - [ ] **Step 1: Implement `SessionDetailViewModel.kt`**
@@ -2800,14 +2903,14 @@ git commit -m "Add session detail screen with rename, delete, and share"
 
 ---
 
-### Task 18: Adaptive navigation host + MainActivity
+### Task 17: Adaptive navigation host + MainActivity
 
 **Files:**
 - Create: `app/src/main/java/com/andrecord/app/ui/AndrecordApp.kt`
 - Create: `app/src/main/java/com/andrecord/app/MainActivity.kt`
 
 **Interfaces:**
-- Consumes: `SessionListScreen`, `SessionListViewModel` (Task 16), `SessionDetailScreen`, `SessionDetailViewModel` (Task 17), `AndrecordTheme` (Task 14), `AndrecordApplication.container` (Task 12)
+- Consumes: `SessionListScreen`, `SessionListViewModel` (Task 15), `SessionDetailScreen`, `SessionDetailViewModel` (Task 16), `AndrecordTheme` (Task 13), `AndrecordApplication.container` (bootstrapped Task 5, fully wired as of Task 10)
 - Produces: `@Composable fun AndrecordApp(container: com.andrecord.app.AppContainer)` — the adaptive list-detail root; `MainActivity`
 
 - [ ] **Step 1: Implement `AndrecordApp.kt`**
