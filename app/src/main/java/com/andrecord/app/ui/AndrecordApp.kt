@@ -12,22 +12,39 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.andrecord.app.AppContainer
+import com.andrecord.app.recording.RecordingState
+import com.andrecord.app.settings.ReopenBehavior
 import com.andrecord.app.ui.detail.SessionDetailScreen
 import com.andrecord.app.ui.detail.SessionDetailViewModel
 import com.andrecord.app.ui.list.SessionListScreen
 import com.andrecord.app.ui.list.SessionListViewModel
+import com.andrecord.app.ui.recording.RecordingScreen
+import com.andrecord.app.ui.recording.RecordingViewModel
+import com.andrecord.app.ui.settings.SettingsScreen
+import com.andrecord.app.ui.settings.SettingsViewModel
+
+private enum class TopLevelDestination { LIST_DETAIL, RECORDING, SETTINGS }
 
 @OptIn(ExperimentalMaterial3AdaptiveApi::class)
 @Composable
 fun AndrecordApp(container: AppContainer) {
-    // `NavigableListDetailPaneScaffold` in adaptive-navigation:1.0.0 is hardcoded to accept a
-    // `ThreePaneScaffoldNavigator<Any>` (its generic type parameter is erased/fixed at the
-    // call-site overload used here, not left open as `<T>`), so requesting a
-    // `ThreePaneScaffoldNavigator<String>` navigator fails to type-check against it. We track the
-    // selected session id ourselves in `selectedSessionId` instead of relying on the navigator's
-    // destination payload type.
     val navigator = rememberListDetailPaneScaffoldNavigator<Any>()
     var selectedSessionId by remember { mutableStateOf<String?>(null) }
+
+    // If a recording is already running when the app opens (e.g. started via Quick Tap or the
+    // volume-key hold while the app was closed), land on the live recording screen by default --
+    // configurable in Settings for anyone who'd rather see the session list first instead.
+    var destination by remember {
+        mutableStateOf(
+            if (container.recordingController.currentState() == RecordingState.RECORDING &&
+                container.appSettings.getReopenBehavior() == ReopenBehavior.LIVE_VIEW
+            ) {
+                TopLevelDestination.RECORDING
+            } else {
+                TopLevelDestination.LIST_DETAIL
+            }
+        )
+    }
 
     val listViewModel = remember {
         SessionListViewModel(
@@ -38,39 +55,56 @@ fun AndrecordApp(container: AppContainer) {
         )
     }
 
-    NavigableListDetailPaneScaffold(
-        navigator = navigator,
-        listPane = {
-            AnimatedPane {
-                // TODO(Task 7): wire these to the real recording/settings destinations once the
-                // top-level destination switch lands -- these are no-ops for now so this screen's
-                // new recording bar and settings gear compile and render ahead of that.
-                SessionListScreen(
-                    viewModel = listViewModel,
-                    onSessionClick = { id ->
-                        selectedSessionId = id
-                        navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, id)
-                    },
-                    onRecordingStarted = {},
-                    onReopenRecording = {},
-                    onOpenSettings = {}
-                )
+    when (destination) {
+        TopLevelDestination.RECORDING -> {
+            val recordingViewModel = remember {
+                RecordingViewModel(container.liveTranscriptState, container.recordingController)
             }
-        },
-        detailPane = {
-            AnimatedPane {
-                val id = selectedSessionId
-                if (id != null) {
-                    val detailViewModel = viewModel(key = id) { SessionDetailViewModel(container.sessionRepository, id) }
-                    SessionDetailScreen(
-                        viewModel = detailViewModel,
-                        onDeleted = {
-                            selectedSessionId = null
-                            navigator.navigateBack()
-                        }
-                    )
-                }
-            }
+            RecordingScreen(
+                viewModel = recordingViewModel,
+                onBack = { destination = TopLevelDestination.LIST_DETAIL }
+            )
         }
-    )
+        TopLevelDestination.SETTINGS -> {
+            val settingsViewModel = remember { SettingsViewModel(container.appSettings) }
+            SettingsScreen(
+                viewModel = settingsViewModel,
+                onBack = { destination = TopLevelDestination.LIST_DETAIL }
+            )
+        }
+        TopLevelDestination.LIST_DETAIL -> {
+            NavigableListDetailPaneScaffold(
+                navigator = navigator,
+                listPane = {
+                    AnimatedPane {
+                        SessionListScreen(
+                            viewModel = listViewModel,
+                            onSessionClick = { id ->
+                                selectedSessionId = id
+                                navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, id)
+                            },
+                            onRecordingStarted = { destination = TopLevelDestination.RECORDING },
+                            onReopenRecording = { destination = TopLevelDestination.RECORDING },
+                            onOpenSettings = { destination = TopLevelDestination.SETTINGS }
+                        )
+                    }
+                },
+                detailPane = {
+                    AnimatedPane {
+                        val id = selectedSessionId
+                        if (id != null) {
+                            val detailViewModel = viewModel(key = id) { SessionDetailViewModel(container.sessionRepository, id) }
+                            SessionDetailScreen(
+                                viewModel = detailViewModel,
+                                onDeleted = {
+                                    selectedSessionId = null
+                                    navigator.navigateBack()
+                                }
+                            )
+                        }
+                    }
+                }
+            )
+        }
+    }
 }
