@@ -1,5 +1,12 @@
 # Changelog
 
+### [2026-07-27 14:35] Added
+
+**Tech:** `AppSettings` (enum `ReopenBehavior`, companion function `parseReopenBehavior()`), `AppContainer.appSettings` — SharedPreferences-backed setting for app reopen behavior  
+**Dev:** Follows the same pure-logic-extraction pattern as `AccessibilityServiceStatus`: the enum parsing is extracted into a testable companion function, while the SharedPreferences access and lifecycle are bundled in the class. Persists one setting: whether opening the app while a recording is active jumps to the live view (`LIVE_VIEW`, default) or shows the session list (`SESSION_LIST`). Built and tested TDD: failing test first, then implementation, all 3 unit tests passing.  
+**Plain:** Added a setting that controls what happens when you open the app while recording — whether you jump to the live transcript view or see the session list.  
+**Why:** The live transcript view (built in Task 2) will need to know whether to auto-open, and persisting this preference means the app remembers your choice across launches instead of always defaulting to one behavior.
+
 ### [2026-07-27 14:20] Added
 
 **Tech:** `AndrecordApplication.AppContainer.liveTranscriptState`, `RecordingService.startRecording()`/`drainAsrEvents()` — wires the new `LiveTranscriptState` holder into the real capture path  
