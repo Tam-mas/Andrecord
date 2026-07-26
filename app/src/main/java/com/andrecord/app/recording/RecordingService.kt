@@ -27,6 +27,7 @@ import com.andrecord.app.workers.DiarizationWorker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import java.io.File
 import java.io.RandomAccessFile
@@ -34,7 +35,11 @@ import java.util.concurrent.TimeUnit
 
 class RecordingService : Service() {
 
-    private val scope = CoroutineScope(Dispatchers.Default + Job())
+    // SupervisorJob (rather than a plain Job) so that an uncaught failure in one child
+    // coroutine (e.g. the capture-loop job) doesn't cancel the shared parent and silently
+    // prevent unrelated sibling coroutines (e.g. a later scope.launch from stopRecording()
+    // or from a subsequent recording's error-marking) from ever running.
+    private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private var audioRecord: AudioRecord? = null
     private var sessionId: String? = null
     private var startTime: Long = 0L
@@ -51,6 +56,17 @@ class RecordingService : Service() {
     @Volatile
     private var stopRequested = false
 
+    // Guards stopRecording() so it only runs its stop/teardown logic once per recording
+    // session. Without this, a second ACTION_STOP delivered after stopRecording() has already
+    // completed (e.g. the notification's "Stop" button, which sends ACTION_STOP straight to the
+    // service, bypassing RecordingController's IDLE/RECORDING guard) would pass the sessionId
+    // != null check again and, since join() on an already-completed job returns immediately,
+    // re-run markProcessing()/enqueue DiarizationWorker even after a mid-recording failure has
+    // already called markError(). Reset at the start of the next startRecording(), not inside
+    // stopRecording() itself, so a genuinely new session isn't blocked by a stale flag.
+    @Volatile
+    private var stopping = false
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> startRecording(intent.getStringExtra(EXTRA_SESSION_ID)!!)
@@ -63,6 +79,7 @@ class RecordingService : Service() {
         sessionId = id
         startTime = System.currentTimeMillis()
         stopRequested = false
+        stopping = false
         val container = (application as AndrecordApplication).container
         wavFile = File(filesDir, "audio/$id.wav").apply { parentFile?.mkdirs() }
 
@@ -99,48 +116,60 @@ class RecordingService : Service() {
             var lastFlush = System.currentTimeMillis()
             var failureReason: String? = null
 
-            while (!stopRequested) {
-                if (!hasEnoughStorage()) {
-                    failureReason = "Ran out of storage"
-                    break
-                }
-                val read = try {
-                    record.read(buffer, 0, buffer.size)
-                } catch (e: SecurityException) {
-                    failureReason = "Microphone permission was revoked"
-                    break
-                }
-                if (read == AudioRecord.ERROR_DEAD_OBJECT || read == AudioRecord.ERROR_INVALID_OPERATION) {
-                    failureReason = "Microphone became unavailable"
-                    break
-                }
-                if (read <= 0) continue
-                val floatSamples = FloatArray(read) { buffer[it] / 32768.0f }
-                pcmFile.write(shortArrayToBytes(buffer, read))
-
-                container.streamingAsrEngine.acceptWaveform(floatSamples)
-                var event = container.streamingAsrEngine.poll()
-                while (event != null) {
-                    if (event is AsrEvent.Final) {
-                        container.pendingAsrSegments.getOrPut(id) { mutableListOf() }.add(event)
+            try {
+                while (!stopRequested) {
+                    if (!hasEnoughStorage()) {
+                        failureReason = "Ran out of storage"
+                        break
                     }
-                    event = container.streamingAsrEngine.poll()
-                }
+                    val read = try {
+                        record.read(buffer, 0, buffer.size)
+                    } catch (e: SecurityException) {
+                        failureReason = "Microphone permission was revoked"
+                        break
+                    }
+                    if (read == AudioRecord.ERROR_DEAD_OBJECT || read == AudioRecord.ERROR_INVALID_OPERATION) {
+                        failureReason = "Microphone became unavailable"
+                        break
+                    }
+                    if (read <= 0) continue
+                    val floatSamples = FloatArray(read) { buffer[it] / 32768.0f }
+                    pcmFile.write(shortArrayToBytes(buffer, read))
 
-                if (System.currentTimeMillis() - lastFlush > FLUSH_INTERVAL_MS) {
-                    flushPendingSegments(id)
-                    lastFlush = System.currentTimeMillis()
+                    container.streamingAsrEngine.acceptWaveform(floatSamples)
+                    var event = container.streamingAsrEngine.poll()
+                    while (event != null) {
+                        if (event is AsrEvent.Final) {
+                            container.pendingAsrSegments.getOrPut(id) { mutableListOf() }.add(event)
+                        }
+                        event = container.streamingAsrEngine.poll()
+                    }
+
+                    if (System.currentTimeMillis() - lastFlush > FLUSH_INTERVAL_MS) {
+                        flushPendingSegments(id)
+                        lastFlush = System.currentTimeMillis()
+                    }
                 }
+            } catch (e: Exception) {
+                // Any unanticipated failure (e.g. an IOException from pcmFile.write()) that
+                // isn't one of the two named failure modes above, which already set
+                // failureReason and break cleanly. Falling through here (rather than letting
+                // the exception propagate out of the coroutine) ensures the `finally` block
+                // below still runs so the WAV file is finalized/closed and the AudioRecord/ASR
+                // engine are released, instead of leaking them and leaving stopRecording()'s
+                // join() to proceed against a never-finalized file.
+                failureReason = failureReason ?: "Unexpected error: ${e.message}"
+            } finally {
+                finalizeWavHeader(pcmFile)
+                pcmFile.close()
+
+                // Only this coroutine ever touches `record`/the ASR engine, so tearing them
+                // down here (rather than from stopRecording()'s caller thread) avoids releasing
+                // them out from under a still-running acceptWaveform()/read() call.
+                releaseAudioRecord(record)
+                audioRecord = null
+                container.streamingAsrEngine.stop()
             }
-            finalizeWavHeader(pcmFile)
-            pcmFile.close()
-
-            // Only this coroutine ever touches `record`/the ASR engine, so tearing them down
-            // here (rather than from stopRecording()'s caller thread) avoids releasing them out
-            // from under a still-running acceptWaveform()/read() call.
-            releaseAudioRecord(record)
-            audioRecord = null
-            container.streamingAsrEngine.stop()
 
             if (failureReason != null) {
                 // Preserve whatever was already flushed to the DB rather than losing the session.
@@ -178,6 +207,8 @@ class RecordingService : Service() {
     }
 
     private fun stopRecording() {
+        if (stopping) return
+        stopping = true
         val id = sessionId ?: return
         val container = (application as AndrecordApplication).container
         val endTime = System.currentTimeMillis()
