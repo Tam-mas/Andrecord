@@ -110,6 +110,62 @@ class SessionRepositoryTest {
         db.close()
     }
 
+    /**
+     * The delete and the insert must be one transaction. Separately, a process death between them
+     * (the WorkManager-retry scenario this pipeline is designed around) would leave the session
+     * with zero rows, and the retry would then diarize nothing and finalize an empty session as
+     * READY without an error anywhere.
+     *
+     * Rolling back a failed insert is the observable consequence of that transaction, so that is
+     * what this asserts: the replacement's second row points at a session that doesn't exist, so
+     * the insert half fails on the foreign key. Against the previous delete-then-insert
+     * implementation the delete had already committed by then and the transcript was gone.
+     */
+    @Test
+    fun `replaceSegments rolls the delete back when the insert fails`() = runTest {
+        val (repo, db) = buildRepo()
+        repo.createSession("s1", startTime = 1000L)
+        repo.appendSegments(
+            listOf(
+                TranscriptSegment(sessionId = "s1", startMs = 0, endMs = 100, speakerLabel = null, text = "first"),
+                TranscriptSegment(sessionId = "s1", startMs = 100, endMs = 200, speakerLabel = null, text = "second")
+            )
+        )
+
+        var threw = false
+        try {
+            repo.replaceSegments(
+                "s1",
+                listOf(
+                    TranscriptSegment(sessionId = "s1", startMs = 0, endMs = 100, speakerLabel = "Speaker 1", text = "first"),
+                    TranscriptSegment(sessionId = "no-such-session", startMs = 100, endMs = 200, speakerLabel = "Speaker 2", text = "second")
+                )
+            )
+        } catch (e: Exception) {
+            threw = true
+        }
+
+        assertTrue(threw)
+        val survivors = repo.getSegmentsOnce("s1")
+        assertEquals(listOf("first", "second"), survivors.map { it.text })
+        assertTrue(survivors.all { it.speakerLabel == null })
+        db.close()
+    }
+
+    @Test
+    fun `replaceSegments with an empty list clears the session's segments`() = runTest {
+        val (repo, db) = buildRepo()
+        repo.createSession("s1", startTime = 1000L)
+        repo.appendSegments(
+            listOf(TranscriptSegment(sessionId = "s1", startMs = 0, endMs = 100, speakerLabel = null, text = "old"))
+        )
+
+        repo.replaceSegments("s1", emptyList())
+
+        assertTrue(repo.getSegmentsOnce("s1").isEmpty())
+        db.close()
+    }
+
     @Test
     fun `rename updates title`() = runTest {
         val (repo, db) = buildRepo()

@@ -45,11 +45,12 @@ class SessionRepository(
      *
      * Deliberately delete-then-insert rather than an update-in-place: alignment can legitimately
      * change the number of segments, and re-deriving the whole set keeps the operation idempotent
-     * across WorkManager retries.
+     * across WorkManager retries. The two halves run in a single Room transaction (see
+     * [TranscriptSegmentDao.replaceForSession]) so the emptied-but-not-yet-refilled state is never
+     * observable, by a retry after a crash or by a Flow subscriber.
      */
     suspend fun replaceSegments(sessionId: String, segments: List<TranscriptSegment>) {
-        transcriptSegmentDao.deleteForSession(sessionId)
-        appendSegments(segments)
+        transcriptSegmentDao.replaceForSession(sessionId, segments)
     }
 
     suspend fun getSegmentsOnce(sessionId: String): List<TranscriptSegment> =
