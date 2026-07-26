@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="toggle_recording"
+        android:enabled="true"
+        android:icon="@android:drawable/ic_btn_speak_now"
+        android:shortcutShortLabel="@string/shortcut_toggle_recording">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.andrecord.app"
+            android:targetClass="com.andrecord.app.triggers.TriggerTrampolineActivity" />
+    </shortcut>
+</shortcuts>

@@ -1,5 +1,12 @@
 # Changelog
 
+### [2026-07-26 19:30] Added
+
+**Tech:** `app/src/main/res/xml/shortcuts.xml`, `app/src/main/java/com/andrecord/app/triggers/TriggerTrampolineActivity.kt`, `AndroidManifest.xml` — App Shortcut definition and invisible trampoline activity for Quick Tap gesture
+**Dev:** `TriggerTrampolineActivity` extends `Activity` with `setShowWhenLocked(true)`/`setTurnScreenOn(false)`, and calls `container.recordingController.toggle()` before finishing — never displays UI. Manifest registers it as `exported="true"` with `Theme.Translucent.NoTitleBar`, `excludeFromRecents="true"`, and `android:showOnLockScreen="true"`. Shortcut uses icon `@android:drawable/ic_btn_speak_now` with id `toggle_recording`. Explicit cast to `LifecycleOwner` used to resolve `lifecycleScope` on base `Activity` class (avoids extending `AppCompatActivity`).
+**Plain:** You can now double-tap the back of a Pixel phone (via Quick Tap in Settings → Gestures) to instantly start/stop recording, even on the lock screen.
+**Why:** Quick Tap is a powerful gesture on Pixel phones — integrating with it means recording can be triggered without unlocking the phone or opening the app, making it frictionless to capture ideas or meetings that pop up unexpectedly.
+
 ### [2026-07-26 19:15] Added
 
 **Tech:** `app/src/main/java/com/andrecord/app/recording/RecordingService.kt` — foreground `Service` that captures mic audio via `AudioRecord`, streams it to `StreamingAsrEngine`, writes a WAV file, and enqueues `DiarizationWorker` on stop; `AndroidRecordingServiceStarter` added to `RecordingServiceStarter.kt`; `container.recordingController` assigned in `AndrecordApplication.onCreate()`, completing `AppContainer` wiring

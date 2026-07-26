@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">Andrecord</string>
+    <string name="shortcut_toggle_recording">Start/stop recording</string>
 </resources>
