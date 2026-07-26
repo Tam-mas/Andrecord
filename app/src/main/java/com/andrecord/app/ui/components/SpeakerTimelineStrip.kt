@@ -42,10 +42,16 @@ fun SpeakerTimelineStrip(segments: List<TranscriptSegment>, modifier: Modifier =
             .height(6.dp)
             .clip(RoundedCornerShape(3.dp))
     ) {
-        proportions.forEach { (label, fraction) ->
+        // weight(), not fillMaxWidth(fraction): Row measures an unweighted child against the
+        // *remaining* main-axis space, so fractional children compound-shrink (two 0.5s render as
+        // 50% then 25% of what's left) and the strip never fills its width. weight() divides the
+        // full width proportionally, which also self-normalizes fractions that don't sum to 1.0
+        // -- as they don't here, since silence between utterances isn't attributed to anyone.
+        // Zero-length segments are dropped because weight() rejects a non-positive weight.
+        proportions.filter { (_, fraction) -> fraction > 0f }.forEach { (label, fraction) ->
             val index = speakerIndexFromLabel(label)
             val color = if (index >= 0) speakerColorFor(index) else AndrecordColors.Ink600
-            Row(modifier = Modifier.fillMaxWidth(fraction).height(6.dp).background(color)) {}
+            Row(modifier = Modifier.weight(fraction).height(6.dp).background(color)) {}
         }
     }
 }
