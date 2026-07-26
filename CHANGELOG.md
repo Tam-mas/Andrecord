@@ -1,5 +1,12 @@
 # Changelog
 
+### [2026-07-26 22:40] Added
+
+**Tech:** `accessibility/AccessibilityServiceStatus.kt` — reads `Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES`/`ACCESSIBILITY_ENABLED` plus a `SharedPreferences` dismissal flag; wired into `SessionListViewModel.showAccessibilityBanner` and rendered as a new `AccessibilityBanner` composable at the top of `SessionListScreen`'s `LazyColumn`
+**Dev:** Closes a gap from the original design spec (§4): Android has no runtime-permission dialog for Accessibility, so enabling `KeyTriggerAccessibilityService` (the volume-key recording trigger) required the user to already know to go dig through Settings themselves. The banner now surfaces the option with a one-tap `Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)` deep link, and an "X" to dismiss it for good once the user has made a choice. The component-name string matching (handling both the fully-qualified `pkg/pkg.Class` and shorthand `pkg/.Class` forms Android accepts in that setting) is isolated into a pure, non-Android-framework function so it's plain-JUnit-testable; the `ContentResolver`/`SharedPreferences`-backed wrapper around it is exercised manually instead. Re-evaluated on `Lifecycle.Event.ON_RESUME` (via a `DisposableEffect` + `LifecycleEventObserver` in `SessionListScreen`) so the banner disappears the moment the user comes back from Settings, without needing to kill and relaunch the app. Manually verified on a Pixel 7 emulator: banner shows when disabled, deep link opens Accessibility settings, dismiss hides it and it stays hidden across a force-stop/relaunch while still disabled, and enabling the service and returning (without killing the app) makes it disappear.
+**Plain:** Added a dismissible banner on the sessions screen that walks you straight to the setting you need to flip so long-pressing Volume Down can start or stop a recording, even when your phone is locked.
+**Why:** This was a real gap from the original plan — without it, the volume-key trigger silently did nothing and there was no way to discover why or fix it from inside the app.
+
 ### [2026-07-26 21:35] Fixed
 
 **Tech:** `RecordingService` capture coroutine — the post-loop tail (final flush, error marking) and the teardown `finally` can no longer throw out of the coroutine

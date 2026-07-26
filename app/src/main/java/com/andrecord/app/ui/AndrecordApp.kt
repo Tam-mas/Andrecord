@@ -29,7 +29,9 @@ fun AndrecordApp(container: AppContainer) {
     val navigator = rememberListDetailPaneScaffoldNavigator<Any>()
     var selectedSessionId by remember { mutableStateOf<String?>(null) }
 
-    val listViewModel = remember { SessionListViewModel(container.sessionRepository, container.recordingController) }
+    val listViewModel = remember {
+        SessionListViewModel(container.sessionRepository, container.recordingController, container.accessibilityServiceStatus)
+    }
 
     NavigableListDetailPaneScaffold(
         navigator = navigator,

@@ -2,6 +2,7 @@ package com.andrecord.app.ui.list
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.andrecord.app.accessibility.AccessibilityServiceStatus
 import com.andrecord.app.data.Session
 import com.andrecord.app.data.SessionRepository
 import com.andrecord.app.data.TranscriptSegment
@@ -19,7 +20,8 @@ import kotlinx.coroutines.launch
 
 class SessionListViewModel(
     private val repository: SessionRepository,
-    private val recordingController: RecordingController
+    private val recordingController: RecordingController,
+    private val accessibilityServiceStatus: AccessibilityServiceStatus
 ) : ViewModel() {
 
     val sessions: StateFlow<List<Session>> = repository.observeSessions()
@@ -46,9 +48,25 @@ class SessionListViewModel(
     private val _recordingState = MutableStateFlow(recordingController.currentState())
     val recordingState: StateFlow<RecordingState> = _recordingState
 
+    // Seeded eagerly from the current system/prefs state so the banner doesn't flash visible on
+    // first composition when the service is already enabled or was already dismissed; refreshed
+    // on resume (see SessionListScreen) since the user backgrounds the app to flip the setting
+    // in Settings and the process stays alive when they come back.
+    private val _showAccessibilityBanner = MutableStateFlow(accessibilityServiceStatus.shouldShowBanner())
+    val showAccessibilityBanner: StateFlow<Boolean> = _showAccessibilityBanner
+
     fun onRecordButtonClick() {
         viewModelScope.launch {
             _recordingState.value = recordingController.toggle()
         }
+    }
+
+    fun refreshAccessibilityBannerState() {
+        _showAccessibilityBanner.value = accessibilityServiceStatus.shouldShowBanner()
+    }
+
+    fun dismissAccessibilityBanner() {
+        accessibilityServiceStatus.dismiss()
+        _showAccessibilityBanner.value = accessibilityServiceStatus.shouldShowBanner()
     }
 }

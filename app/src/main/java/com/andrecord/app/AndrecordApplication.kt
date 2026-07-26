@@ -5,6 +5,7 @@ import androidx.work.Configuration
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
+import com.andrecord.app.accessibility.AccessibilityServiceStatus
 import com.andrecord.app.asr.SherpaOnnxStreamingAsrEngine
 import com.andrecord.app.asr.StreamingAsrEngine
 import com.andrecord.app.data.AndrecordDatabase
@@ -28,6 +29,8 @@ class AppContainer(app: Application) {
         database.sessionDao(),
         database.transcriptSegmentDao()
     ) { path -> File(path).delete() }
+
+    val accessibilityServiceStatus = AccessibilityServiceStatus(app)
 
     lateinit var streamingAsrEngine: StreamingAsrEngine
     lateinit var diarizationEngine: DiarizationEngine
