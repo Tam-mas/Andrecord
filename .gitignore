@@ -13,3 +13,6 @@ local.properties
 captures/
 .externalNativeBuild/
 .cxx/
+
+# JVM/Gradle daemon heap dumps (can appear after an OOM crash)
+*.hprof
