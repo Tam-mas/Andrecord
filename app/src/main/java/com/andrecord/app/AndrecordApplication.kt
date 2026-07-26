@@ -1,6 +1,7 @@
 package com.andrecord.app
 
 import android.app.Application
+import androidx.work.Configuration
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
@@ -30,8 +31,11 @@ class AppContainer(app: Application) {
     lateinit var recordingController: RecordingController
 }
 
-class AndrecordApplication : Application() {
+class AndrecordApplication : Application(), Configuration.Provider {
     lateinit var container: AppContainer
+
+    override val workManagerConfiguration: Configuration
+        get() = Configuration.Builder().build()
 
     override fun onCreate() {
         super.onCreate()
@@ -40,13 +44,9 @@ class AndrecordApplication : Application() {
     }
 
     private fun scheduleRetention() {
-        try {
-            val request = PeriodicWorkRequestBuilder<RetentionWorker>(1, TimeUnit.DAYS).build()
-            WorkManager.getInstance(this).enqueueUniquePeriodicWork(
-                "audio_retention", ExistingPeriodicWorkPolicy.KEEP, request
-            )
-        } catch (e: IllegalStateException) {
-            // WorkManager not initialized (typically in unit tests)
-        }
+        val request = PeriodicWorkRequestBuilder<RetentionWorker>(1, TimeUnit.DAYS).build()
+        WorkManager.getInstance(this).enqueueUniquePeriodicWork(
+            "audio_retention", ExistingPeriodicWorkPolicy.KEEP, request
+        )
     }
 }
