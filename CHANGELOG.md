@@ -1,5 +1,12 @@
 # Changelog
 
+### [2026-07-27 15:25] Added
+
+**Tech:** `SettingsViewModel`, `SettingsScreen` (`ui/settings/`) — minimal settings screen with radio buttons for reopen behavior  
+**Dev:** `SettingsViewModel` is a thin state holder: exposes `AppSettings.getReopenBehavior()` as a `StateFlow<ReopenBehavior>` and forwards `onSelect(behavior)` calls to `AppSettings.setReopenBehavior()`. `SettingsScreen` is a `Scaffold` with a `TopAppBar` (title "Settings" with a back-arrow icon connected to `onBack()`), `BackHandler` routed to `onBack()`, and a `Column` of radio-button rows for the two reopen options (`LIVE_VIEW` / `SESSION_LIST`). Clicking a radio button or the row calls `viewModel.onSelect()` and updates the selected state. Built exactly as specified in the task brief. Full unit test suite (52 tests) and `:app:assembleDebug` both pass; screen not yet reachable through navigation (that comes in a later task).  
+**Plain:** Added a minimal settings screen with one radio-button setting that controls what happens when you open the app while a recording is active — whether to jump to the live transcript view or show the session list.  
+**Why:** Task 3 added the underlying `AppSettings` persistence; this is the UI that lets you actually change that setting without manually editing SharedPreferences.
+
 ### [2026-07-27 15:10] Added
 
 **Tech:** `RecordingViewModel`, `RecordingScreen` (`ui/recording/`), pure `formatElapsed(startMillis, nowMillis): String`  
