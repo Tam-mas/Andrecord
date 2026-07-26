@@ -1,4 +1,5 @@
 <resources>
     <string name="app_name">Andrecord</string>
     <string name="shortcut_toggle_recording">Start/stop recording</string>
+    <string name="accessibility_service_description">Lets Andrecord start/stop recording when you long-press Volume Down, even while the phone is locked.</string>
 </resources>
