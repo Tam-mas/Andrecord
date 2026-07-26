@@ -1,0 +1,26 @@
+package com.andrecord.app.ui.components
+
+import com.andrecord.app.data.TranscriptSegment
+import org.junit.Assert.assertEquals
+import org.junit.Test
+
+class TimelineProportionsTest {
+
+    @Test
+    fun `merges adjacent same-speaker segments and computes fractions`() {
+        val segments = listOf(
+            TranscriptSegment(sessionId = "s1", startMs = 0, endMs = 1000, speakerLabel = "Speaker 1", text = "a"),
+            TranscriptSegment(sessionId = "s1", startMs = 1000, endMs = 2000, speakerLabel = "Speaker 1", text = "b"),
+            TranscriptSegment(sessionId = "s1", startMs = 2000, endMs = 4000, speakerLabel = "Speaker 2", text = "c"),
+        )
+
+        val result = computeTimelineProportions(segments)
+
+        assertEquals(listOf("Speaker 1" to 0.5f, "Speaker 2" to 0.5f), result)
+    }
+
+    @Test
+    fun `empty segments produces empty proportions`() {
+        assertEquals(emptyList<Pair<String?, Float>>(), computeTimelineProportions(emptyList()))
+    }
+}
