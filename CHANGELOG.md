@@ -1,5 +1,12 @@
 # Changelog
 
+### [2026-07-27 13:40] Added
+
+**Tech:** `LiveTranscriptState` and `LiveTranscriptSnapshot` — pure Kotlin state holder for live recording transcript updates, with `StateFlow<LiveTranscriptSnapshot>` observable and methods to `start()`, `appendFinal()`, `updatePartial()`, and `clear()`  
+**Dev:** This is a lightweight, framework-independent state container fed directly by `RecordingService` during ASR event processing. It holds the current recording's sessionId and startTime, a list of finalized transcript lines, and a partial line for in-flight speech. It's entirely separate from the Room-backed transcript — this holder only drives the in-progress UI while a recording is active and is cleared when it ends. No Android framework dependency, so it's plain-JUnit-testable with direct `StateFlow.value` access.  
+**Plain:** Added a state container for live transcript updates during a recording session, enabling real-time UI display without Android framework dependencies.  
+**Why:** The upcoming live recording view needs a simple, testable state holder to show transcripts as they're being captured in real time, separate from the persistent database.
+
 ### [2026-07-26 22:40] Added
 
 **Tech:** `accessibility/AccessibilityServiceStatus.kt` — reads `Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES`/`ACCESSIBILITY_ENABLED` plus a `SharedPreferences` dismissal flag; wired into `SessionListViewModel.showAccessibilityBanner` and rendered as a new `AccessibilityBanner` composable at the top of `SessionListScreen`'s `LazyColumn`
