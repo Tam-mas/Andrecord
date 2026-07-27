@@ -35,11 +35,15 @@ class TranscriptionWorkerLogicTest {
         private val throwOnCallIndex: Set<Int> = emptySet()
     ) : OfflineAsrEngine {
         var callCount = 0
+        var releaseCalls = 0
         override fun transcribe(samples: FloatArray, sampleRate: Int): String {
             val index = callCount
             callCount++
             if (index in throwOnCallIndex) throw RuntimeException("simulated transcription failure")
             return textByCallIndex[index]
+        }
+        override fun release() {
+            releaseCalls++
         }
     }
 

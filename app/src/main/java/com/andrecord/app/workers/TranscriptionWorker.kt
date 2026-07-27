@@ -54,6 +54,11 @@ class TranscriptionWorker(context: Context, params: WorkerParameters) : Coroutin
         } catch (e: Exception) {
             Log.w(TAG, "runTranscription failed for session $sessionId", e)
             null
+        } finally {
+            // Whisper's native model memory (hundreds of MB) is only needed for the duration of
+            // this worker run -- release it as soon as we're done, success or failure, rather than
+            // holding it for the rest of the app process's lifetime.
+            container.whisperAsrEngine.release()
         }
 
         if (speakerCount == null) {

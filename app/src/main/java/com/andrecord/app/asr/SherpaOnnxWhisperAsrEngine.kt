@@ -17,10 +17,14 @@ import com.k2fsa.sherpa.onnx.OfflineWhisperModelConfig
  */
 class SherpaOnnxWhisperAsrEngine(private val context: Context) : OfflineAsrEngine {
 
-    // Deferred: loading the Whisper encoder + decoder graphs is expensive, and this engine has no
-    // start()/stop() lifecycle of its own -- same reasoning as SherpaOnnxDiarizationEngine's lazy
-    // `diarizer` property.
-    private val recognizer: OfflineRecognizer by lazy {
+    // Lazily constructed on first use, and explicitly released via [release] once the caller
+    // (TranscriptionWorker) is done with it for this run -- unlike SherpaOnnxDiarizationEngine's
+    // `diarizer`, this engine's native memory is large enough (hundreds of MB) and infrequent
+    // enough in use (once per recording) that holding it for the app's entire process lifetime is
+    // wasteful. `by lazy` can't be reset, so this uses a nullable var + helper instead.
+    private var recognizer: OfflineRecognizer? = null
+
+    private fun getOrCreateRecognizer(): OfflineRecognizer = recognizer ?: run {
         val config = OfflineRecognizerConfig(
             featConfig = FeatureConfig(
                 sampleRate = SAMPLE_RATE,
@@ -42,10 +46,11 @@ class SherpaOnnxWhisperAsrEngine(private val context: Context) : OfflineAsrEngin
                 numThreads = 4,
             ),
         )
-        OfflineRecognizer(assetManager = context.assets, config = config)
+        OfflineRecognizer(assetManager = context.assets, config = config).also { recognizer = it }
     }
 
     override fun transcribe(samples: FloatArray, sampleRate: Int): String {
+        val recognizer = getOrCreateRecognizer()
         val stream = recognizer.createStream()
         try {
             stream.acceptWaveform(samples, sampleRate)
@@ -54,6 +59,11 @@ class SherpaOnnxWhisperAsrEngine(private val context: Context) : OfflineAsrEngin
         } finally {
             stream.release()
         }
+    }
+
+    override fun release() {
+        recognizer?.release()
+        recognizer = null
     }
 
     /** sherpa-onnx resolves model paths relative to the AssetManager root, so the
