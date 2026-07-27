@@ -1,5 +1,12 @@
 # Changelog
 
+### [2026-07-27 18:10] Added
+
+**Tech:** `mipmap-anydpi-v26/ic_launcher.xml`, `ic_launcher_round.xml`, per-density `ic_launcher_foreground.png`/`ic_launcher.png`/`ic_launcher_round.png`, `values/colors.xml`, `AndroidManifest.xml:android:roundIcon`  
+**Dev:** Replaced the default project-template launcher icon with the provided artwork (transparent-background version, from `Icon/Andrecord.png`). Built a full adaptive icon (API 26+): foreground layer scaled to ~62% of the 108dp canvas and centered so the circular badge isn't clipped by circle/squircle/rounded-square launcher masks, background layer is a flat `#14181F` (the app's existing `Ink900` dark background color, kept consistent with the rest of the UI). Also generated legacy pre-API26 fallback icons (mdpi through xxxhdpi, plus round variants) with the logo composited directly over the same dark background at full bleed, since those bitmaps are used as-is with no adaptive masking. Generated with Pillow in an isolated venv (no image tooling was already available in this environment).  
+**Plain:** The app now uses its real logo (a stylized waveform-into-transcript-lines badge) as its home-screen icon instead of the generic Android placeholder.  
+**Why:** The user supplied their own icon artwork and wanted it actually wired up as the app's icon rather than sitting unused in the repo.
+
 ### [2026-07-27 17:35] Fixed
 
 **Tech:** `RecordingController.activeSessionId` — marked `@Volatile`  

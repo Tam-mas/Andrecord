@@ -16,3 +16,6 @@ captures/
 
 # JVM/Gradle daemon heap dumps (can appear after an OOM crash)
 *.hprof
+
+# macOS
+.DS_Store
