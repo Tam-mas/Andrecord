@@ -21,6 +21,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.unit.dp
+import com.andrecord.app.recording.RecordingState
 import com.andrecord.app.ui.theme.AndrecordColors
 import kotlinx.coroutines.delay
 
@@ -37,7 +38,19 @@ fun RecordingScreen(viewModel: RecordingViewModel, onBack: () -> Unit) {
     BackHandler(onBack = onBack)
 
     val snapshot by viewModel.snapshot.collectAsState()
+    val recordingState by viewModel.recordingState.collectAsState()
     var now by remember { mutableStateOf(System.currentTimeMillis()) }
+
+    // The recording can end via a path this screen never initiated -- a volume-key/Quick-Tap
+    // stop, the recording notification's own Stop action, or a mid-recording failure -- so this
+    // screen must not rely solely on its own Stop button to navigate away. Whenever the shared
+    // controller state leaves RECORDING for any reason, bounce back to the list rather than keep
+    // displaying a live view for a recording that's already over.
+    LaunchedEffect(recordingState) {
+        if (recordingState != RecordingState.RECORDING) {
+            onBack()
+        }
+    }
 
     LaunchedEffect(snapshot.startTime) {
         while (snapshot.startTime != null) {
