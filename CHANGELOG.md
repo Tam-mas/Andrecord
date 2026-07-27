@@ -1,5 +1,12 @@
 # Changelog
 
+### [2026-07-27 16:35] Fixed
+
+**Tech:** `RecordingService.stopRecording()` — calls `recordingController.reportRecordingEnded()` on the normal teardown path  
+**Dev:** The recording notification's Stop action sends `ACTION_STOP` straight to the service (bypassing `RecordingController` entirely), so `stopRecording()`'s success path never told the controller a recording had ended -- its state stayed `RECORDING` forever after that specific stop path. Now calls the already-idempotent `reportRecordingEnded()` (previously only used on the mid-recording-failure path) right after the `failedSessionId` guard, so it's a safe no-op on the normal FAB-tap stop path too. Not unit tested: `RecordingService`'s full stop lifecycle needs a real `AudioRecord`/foreground-service/`NotificationManager` stack that this project's test suite deliberately doesn't drive end-to-end (`RecordingServiceFlushTest` only exercises the extracted pure `flushSegments()` helper); verified instead by code inspection that the call is idempotent and correctly placed after the failure-path guard.  
+**Plain:** Stopping a recording from the notification's own Stop button now correctly tells the rest of the app the recording has ended.  
+**Why:** Force-stopping a recording from the notification and then reopening the app used to land you on a stale, dead live view, because the app still thought a recording was running -- this makes that stop path behave the same as every other way of stopping.
+
 ### [2026-07-27 16:25] Fixed
 
 **Tech:** `LiveTranscriptState.clearIf()`/`appendFinalIf()`/`updatePartialIf()`, `RecordingService.drainAsrEvents()` — session-scoped guards against a stop-then-restart race  
