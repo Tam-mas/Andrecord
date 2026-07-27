@@ -18,9 +18,6 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
-import androidx.work.Data
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.WorkManager
 import com.andrecord.app.AndrecordApplication
 import com.andrecord.app.AppContainer
 import com.andrecord.app.asr.AsrEvent
@@ -78,7 +75,7 @@ class RecordingService : Service() {
     // completed (e.g. the notification's "Stop" button, which sends ACTION_STOP straight to the
     // service, bypassing RecordingController's IDLE/RECORDING guard) would pass the sessionId
     // != null check again and, since join() on an already-completed job returns immediately,
-    // re-run markProcessing()/enqueue DiarizationWorker even after a mid-recording failure has
+    // re-run markProcessing()/enqueue TranscriptionWorker even after a mid-recording failure has
     // already called markError(). Reset at the start of the next startRecording(), not inside
     // stopRecording() itself, so a genuinely new session isn't blocked by a stale flag.
     @Volatile
@@ -187,7 +184,7 @@ class RecordingService : Service() {
             // Finalized ASR utterances that haven't reached Room yet. Deliberately local to this
             // coroutine (rather than the process-wide map this used to accumulate into): only this
             // coroutine touches it, flushPendingSegments() drains what it writes, and nothing
-            // outside this service reads it -- DiarizationWorker now reads the flushed rows back
+            // outside this service reads it -- TranscriptionWorker now reads the flushed rows back
             // out of Room instead, so it survives the process death WorkManager outlives.
             val pendingSegments = mutableListOf<AsrEvent.Final>()
 
@@ -258,7 +255,7 @@ class RecordingService : Service() {
             }
 
             // Final flush. The 5-second cadence above always leaves a tail unwritten, and
-            // DiarizationWorker reads these rows back out of Room as its source of truth, so
+            // TranscriptionWorker reads these rows back out of Room as its source of truth, so
             // everything must be durable before stopRecording()'s join() returns and enqueues it.
             step("Saving the transcript") { flushPendingSegments(id, pendingSegments) }
 
@@ -407,7 +404,7 @@ class RecordingService : Service() {
         scope.launch {
             // Wait for the capture loop to notice the stop signal and finish releasing the mic,
             // finalizing the WAV header, and stopping the ASR engine, before we read the (now
-            // final) file path or hand it to DiarizationWorker.
+            // final) file path or hand it to TranscriptionWorker.
             recordingJob?.join()
 
             // join() completes the same way for a job that failed as for one that finished

@@ -53,7 +53,7 @@ class SessionRepository(
     }
 
     /**
-     * Swaps a session's transcript for [segments]. Used by DiarizationWorker to replace the
+     * Swaps a session's transcript for [segments]. Used by TranscriptionWorker to replace the
      * unlabeled segments RecordingService flushed while recording with their speaker-labeled
      * equivalents -- without this, the labeled copies would simply be appended alongside the
      * unlabeled originals and every utterance would appear twice.

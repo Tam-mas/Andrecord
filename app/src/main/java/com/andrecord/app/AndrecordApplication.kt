@@ -19,6 +19,7 @@ import com.andrecord.app.recording.LiveTranscriptState
 import com.andrecord.app.recording.RecordingController
 import com.andrecord.app.settings.AppSettings
 import com.andrecord.app.workers.RetentionWorker
+import com.andrecord.app.workers.TranscriptionWorker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -61,6 +62,9 @@ class AndrecordApplication : Application(), Configuration.Provider {
         container.diarizationEngine = SherpaOnnxDiarizationEngine(this)
         container.whisperAsrEngine = SherpaOnnxWhisperAsrEngine(this)
         container.recordingController = RecordingController(container.sessionRepository, AndroidRecordingServiceStarter(this))
+        container.sessionRepository.transcriptionEnqueuer = { sessionId, wavFilePath, durationMs, startTime ->
+            TranscriptionWorker.enqueue(this, sessionId, wavFilePath, durationMs, startTime)
+        }
         reconcileInterruptedSessions()
         scheduleRetention()
     }

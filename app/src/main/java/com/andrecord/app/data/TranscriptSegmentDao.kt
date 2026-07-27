@@ -16,7 +16,7 @@ interface TranscriptSegmentDao {
 
     /**
      * One-shot counterpart of [getForSession], for callers that need a snapshot rather than a
-     * subscription -- notably DiarizationWorker, which reads the segments RecordingService
+     * subscription -- notably TranscriptionWorker, which reads the segments RecordingService
      * already flushed to disk and cannot rely on a Flow it would have to collect-and-cancel.
      */
     @Query("SELECT * FROM transcript_segments WHERE sessionId = :sessionId ORDER BY startMs ASC")
