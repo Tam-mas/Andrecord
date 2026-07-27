@@ -1,5 +1,12 @@
 # Changelog
 
+### [2026-07-27 16:55] Fixed
+
+**Tech:** `RecordingScreen` — `rememberLazyListState()` + `LaunchedEffect` auto-scroll  
+**Dev:** The transcript `LazyColumn` (finalized lines + dimmed/italic partial line) had no auto-scroll, so once it exceeded one screen, new content scrolled off the bottom and stayed hidden. Added `rememberLazyListState()` passed to the `LazyColumn`, plus `LaunchedEffect(snapshot.finalLines.size, snapshot.partialLine) { listState.animateScrollToItem(lastIndex) }` where `lastIndex` accounts for the optional trailing partial-line item. Judgment call: chose "always scroll to bottom" over a scroll-position-aware version that suppresses auto-scroll once the user has manually scrolled up -- the latter needs tracking scroll offset against content size across recompositions, which is meaningfully more complex for a screen that's continuously appending content; always-follow-the-tail matches the default behavior of most chat/log UIs. Not unit tested: pure Compose scroll behavior with no logic to extract into a testable pure function, and no Compose UI test harness set up in this project.  
+**Plain:** The live transcript now automatically scrolls down as new speech is transcribed, instead of leaving new lines hidden below the visible area once the conversation gets long.  
+**Why:** A live view that silently scrolls new content out of sight defeats the purpose of watching it live -- this keeps the newest words on screen as they come in.
+
 ### [2026-07-27 16:45] Fixed
 
 **Tech:** `AndrecordApp.kt` — `destination` and `selectedSessionId` switched to `rememberSaveable`  
