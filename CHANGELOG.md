@@ -1,5 +1,12 @@
 # Changelog
 
+### [2026-07-27 16:45] Fixed
+
+**Tech:** `AndrecordApp.kt` — `destination` and `selectedSessionId` switched to `rememberSaveable`  
+**Dev:** `MainActivity` declares no `android:configChanges`, so folding/unfolding this app's primary target foldable (or rotating) destroys and recreates the Activity/Composition; both `destination` (a private `TopLevelDestination` enum) and `selectedSessionId` were held in plain `remember { mutableStateOf(...) }` and so reset on every recreation. `selectedSessionId` (`String?`) moves to `rememberSaveable` directly. `destination` uses `rememberSaveable(stateSaver = TopLevelDestinationSaver)`, a small custom `Saver<TopLevelDestination, String>` that stores just the enum's `.name` -- confirmed the "compute initial destination from recording state + settings" init lambda still only runs on a fresh instance (not on every recomposition/restoration), same as plain `remember`, so a restored `RECORDING`/`SETTINGS` destination is never silently clobbered by that check. Not unit tested: this is Compose state-restoration behavior across Activity recreation, and the project has no Compose UI test harness (`androidx.compose.ui:ui-test`) set up to extend; the existing suite is plain-JUnit/Robolectric-DAO style.  
+**Plain:** Folding or unfolding the phone (or rotating it) while on the live recording screen, the Settings screen, or a session's detail view no longer bounces you back to the session list or loses which session you had open.  
+**Why:** This app's primary target is a foldable, and folding/unfolding it recreates the screen from scratch -- without this, doing that at the wrong moment silently threw away where you were.
+
 ### [2026-07-27 16:35] Fixed
 
 **Tech:** `RecordingService.stopRecording()` — calls `recordingController.reportRecordingEnded()` on the normal teardown path  
