@@ -1,6 +1,7 @@
 package com.andrecord.app.diarization
 
 import android.content.Context
+import com.k2fsa.sherpa.onnx.FastClusteringConfig
 import com.k2fsa.sherpa.onnx.OfflineSpeakerDiarization
 import com.k2fsa.sherpa.onnx.OfflineSpeakerDiarizationConfig
 import com.k2fsa.sherpa.onnx.OfflineSpeakerSegmentationModelConfig
@@ -48,8 +49,26 @@ class SherpaOnnxDiarizationEngine(private val context: Context) : DiarizationEng
                 ),
             ),
             embedding = SpeakerEmbeddingExtractorConfig(
+                // Upgraded from a ~26 MB mid-tier embedding model to NeMo TitaNet-Large (~97 MB,
+                // one of the strongest English speaker-verification models in sherpa-onnx's model
+                // zoo), for better speaker discrimination. English-only, matching this app's scope.
                 model = assetPath("models/diarization/embedding.onnx"),
                 numThreads = 2,
+            ),
+            // Previously left unset, so this class relied on whichever default FastClusteringConfig's
+            // own no-arg constructor uses internally (not independently verified here -- javap shows
+            // constructor signatures, not default field values baked into bytecode). Passing this
+            // explicitly removes that uncertainty going forward regardless of what the old default
+            // was. -1 tells the clusterer to pick the speaker count automatically via the threshold
+            // rather than assuming a fixed number, since Andrecord has no way to know how many people
+            // are in a meeting ahead of time. 0.6 is a starting point intended to require a fairly
+            // high similarity before merging two segments into one speaker, reducing false-merges of
+            // two distinct (but similar-sounding) speakers now that the embedding model itself is more
+            // discriminative -- treat as a starting point, not a verified-optimal value, and adjust
+            // based on real-recording testing in Step 4.
+            clustering = FastClusteringConfig(
+                numClusters = -1,
+                threshold = 0.6f,
             ),
         )
         OfflineSpeakerDiarization(assetManager = context.assets, config = config)
