@@ -176,4 +176,63 @@ class SessionRepositoryTest {
         assertEquals("Budget sync", db.sessionDao().getById("s1")?.title)
         db.close()
     }
+
+    @Test
+    fun `markProcessingFailed sets ERROR without touching the title`() = runTest {
+        val (repo, db) = buildRepo()
+        repo.createSession("s1", startTime = 1000L)
+        repo.markProcessing("s1", endTime = 5000L, durationMs = 4000L, audioFilePath = "/audio/s1.wav", audioDeleteAt = 999_999L)
+        val titleBefore = db.sessionDao().getById("s1")?.title
+
+        repo.markProcessingFailed("s1")
+
+        val session = db.sessionDao().getById("s1")
+        assertEquals(SessionStatus.ERROR, session?.status)
+        assertEquals(titleBefore, session?.title)
+        db.close()
+    }
+
+    @Test
+    fun `retryProcessing moves an errored session back to PROCESSING and re-enqueues`() = runTest {
+        val enqueued = mutableListOf<Quadruple>()
+        val (repo, db) = buildRepo()
+        repo.transcriptionEnqueuer = { sessionId, wavFilePath, durationMs, startTime ->
+            enqueued.add(Quadruple(sessionId, wavFilePath, durationMs, startTime))
+        }
+        repo.createSession("s1", startTime = 1000L)
+        repo.markProcessing("s1", endTime = 5000L, durationMs = 4000L, audioFilePath = "/audio/s1.wav", audioDeleteAt = 999_999L)
+        repo.markProcessingFailed("s1")
+
+        repo.retryProcessing("s1")
+
+        assertEquals(SessionStatus.PROCESSING, db.sessionDao().getById("s1")?.status)
+        assertEquals(1, enqueued.size)
+        assertEquals("s1", enqueued[0].sessionId)
+        assertEquals("/audio/s1.wav", enqueued[0].wavFilePath)
+        assertEquals(4000L, enqueued[0].durationMs)
+        assertEquals(1000L, enqueued[0].startTime)
+        db.close()
+    }
+
+    @Test
+    fun `retryProcessing does nothing when the session has no audio file`() = runTest {
+        val enqueued = mutableListOf<Quadruple>()
+        val (repo, db) = buildRepo()
+        repo.transcriptionEnqueuer = { sessionId, wavFilePath, durationMs, startTime ->
+            enqueued.add(Quadruple(sessionId, wavFilePath, durationMs, startTime))
+        }
+        repo.createSession("s1", startTime = 1000L)
+        // Never reached markProcessing, so audioFilePath/durationMs are still null -- mirrors a
+        // session whose recording itself failed, which markProcessingFailed/retryProcessing should
+        // never apply to since there is no audio to reprocess.
+        repo.markError("s1", "some reason")
+
+        repo.retryProcessing("s1")
+
+        assertEquals(SessionStatus.ERROR, db.sessionDao().getById("s1")?.status)
+        assertEquals(0, enqueued.size)
+        db.close()
+    }
+
+    private data class Quadruple(val sessionId: String, val wavFilePath: String, val durationMs: Long, val startTime: Long)
 }

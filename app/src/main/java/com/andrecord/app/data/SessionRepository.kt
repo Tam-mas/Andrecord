@@ -12,6 +12,21 @@ class SessionRepository(
 ) {
     private val titleFormat = SimpleDateFormat("MMM d, yyyy, h:mm a", Locale.US)
 
+    /**
+     * Re-enqueues transcription refinement for a retried session (see [retryProcessing]).
+     * Deliberately a settable property, not a constructor parameter: this class's constructor is
+     * called with Kotlin's trailing-lambda syntax at several existing call sites (e.g.
+     * `SessionRepository(db.sessionDao(), db.transcriptSegmentDao()) { path -> ... }`, where the
+     * trailing lambda binds to [audioFileDeleter]). Trailing-lambda syntax always binds to the
+     * literal last constructor parameter, so adding any new parameter after [audioFileDeleter] --
+     * defaulted or not -- would break every one of those call sites. A property assigned after
+     * construction avoids that, matching how `AppContainer` already assigns
+     * `diarizationEngine`/`recordingController` after constructing itself, once the Android
+     * `Context` those need is available.
+     */
+    var transcriptionEnqueuer: (sessionId: String, wavFilePath: String, durationMs: Long, startTime: Long) -> Unit =
+        { _, _, _, _ -> }
+
     suspend fun createSession(id: String, startTime: Long): Session {
         val session = Session(
             id = id,
@@ -89,6 +104,36 @@ class SessionRepository(
     suspend fun markError(id: String, reason: String) {
         val session = sessionDao.getById(id) ?: return
         sessionDao.update(session.copy(status = SessionStatus.ERROR, title = "${session.title} (${reason})"))
+    }
+
+    /**
+     * Sets [SessionStatus.ERROR] without mutating the title, unlike [markError]. [markError] is
+     * only ever called on a session that never left [SessionStatus.RECORDING] (a mid-capture
+     * failure or a process-death reconciliation sweep) -- a terminal, one-time failure with no
+     * retry path, where baking a reason into the title makes sense. This method is for a session
+     * that DID record successfully and has a real [Session.audioFilePath], but whose transcription
+     * refinement failed after exhausting retries -- a state the user can retry from repeatedly via
+     * [retryProcessing], so mutating the title here would stack up multiple reason suffixes on
+     * every retry attempt that fails again.
+     */
+    suspend fun markProcessingFailed(id: String) {
+        val session = sessionDao.getById(id) ?: return
+        sessionDao.update(session.copy(status = SessionStatus.ERROR))
+    }
+
+    /**
+     * Re-enqueues transcription refinement for a session left in [SessionStatus.ERROR] by
+     * [markProcessingFailed]. A no-op if the session has no [Session.audioFilePath] or
+     * [Session.durationMs] -- either it never recorded successfully in the first place (the
+     * [markError] case above), or [audioFileDeleter] has since deleted the WAV after the 7-day
+     * retention window, in which case there is nothing left to reprocess.
+     */
+    suspend fun retryProcessing(id: String) {
+        val session = sessionDao.getById(id) ?: return
+        val wavFilePath = session.audioFilePath ?: return
+        val durationMs = session.durationMs ?: return
+        sessionDao.update(session.copy(status = SessionStatus.PROCESSING))
+        transcriptionEnqueuer(id, wavFilePath, durationMs, session.startTime)
     }
 
     suspend fun rename(id: String, newTitle: String) {
