@@ -400,6 +400,15 @@ class RecordingService : Service() {
             // as PROCESSING and enqueue diarization over a WAV that was never finished.
             if (failedSessionId == id) return@launch
 
+            // Notification's "Stop" action lands here via ACTION_STOP, straight to the service,
+            // bypassing RecordingController entirely -- without this, the controller stays in
+            // RECORDING forever after this specific stop path, so a later app relaunch would
+            // think a recording is still live (see AndrecordApp's initial-destination check) and
+            // land on a dead live view. reportRecordingEnded() is idempotent, so this is also a
+            // harmless no-op on the normal FAB-tap path, where RecordingController.stop() has
+            // already set itself back to IDLE before this even runs.
+            container.recordingController.reportRecordingEnded()
+
             container.sessionRepository.markProcessing(
                 id, endTime, durationMs,
                 audioFilePath = file.absolutePath,
