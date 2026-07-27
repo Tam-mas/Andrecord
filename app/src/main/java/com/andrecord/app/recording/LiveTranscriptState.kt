@@ -25,16 +25,20 @@ class LiveTranscriptState {
         _snapshot.value = LiveTranscriptSnapshot(sessionId = sessionId, startTime = startTime)
     }
 
-    fun appendFinal(text: String) {
+    // Unguarded; only meant to be called through the session-scoped *If variants below, which are
+    // the only production call sites (RecordingService.kt). Kept private rather than public so an
+    // unguarded call isn't sitting right next to the safe one as an easy-to-reach-for footgun --
+    // see clearIf's doc for the race this guards against.
+    private fun appendFinal(text: String) {
         val current = _snapshot.value
         _snapshot.value = current.copy(finalLines = current.finalLines + text, partialLine = null)
     }
 
-    fun updatePartial(text: String) {
+    private fun updatePartial(text: String) {
         _snapshot.value = _snapshot.value.copy(partialLine = text)
     }
 
-    fun clear() {
+    private fun clear() {
         _snapshot.value = LiveTranscriptSnapshot()
     }
 

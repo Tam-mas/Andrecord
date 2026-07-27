@@ -23,9 +23,9 @@ class LiveTranscriptStateTest {
     fun `appendFinal appends permanently and clears the partial`() {
         val state = LiveTranscriptState()
         state.start("s1", 1000L)
-        state.updatePartial("hello the")
+        state.updatePartialIf("s1", "hello the")
 
-        state.appendFinal("hello there")
+        state.appendFinalIf("s1", "hello there")
 
         val snapshot = state.snapshot.value
         assertEquals(listOf("hello there"), snapshot.finalLines)
@@ -36,9 +36,9 @@ class LiveTranscriptStateTest {
     fun `appendFinal appends to existing lines rather than replacing them`() {
         val state = LiveTranscriptState()
         state.start("s1", 1000L)
-        state.appendFinal("first")
+        state.appendFinalIf("s1", "first")
 
-        state.appendFinal("second")
+        state.appendFinalIf("s1", "second")
 
         assertEquals(listOf("first", "second"), state.snapshot.value.finalLines)
     }
@@ -48,8 +48,8 @@ class LiveTranscriptStateTest {
         val state = LiveTranscriptState()
         state.start("s1", 1000L)
 
-        state.updatePartial("hello")
-        state.updatePartial("hello there")
+        state.updatePartialIf("s1", "hello")
+        state.updatePartialIf("s1", "hello there")
 
         assertEquals("hello there", state.snapshot.value.partialLine)
     }
@@ -58,10 +58,10 @@ class LiveTranscriptStateTest {
     fun `clear resets to an empty snapshot`() {
         val state = LiveTranscriptState()
         state.start("s1", 1000L)
-        state.appendFinal("hi")
-        state.updatePartial("more")
+        state.appendFinalIf("s1", "hi")
+        state.updatePartialIf("s1", "more")
 
-        state.clear()
+        state.clearIf("s1")
 
         assertEquals(LiveTranscriptSnapshot(), state.snapshot.value)
     }
@@ -75,7 +75,7 @@ class LiveTranscriptStateTest {
     fun `clearIf is a no-op when a newer session has already started`() {
         val state = LiveTranscriptState()
         state.start("old-session", 1000L)
-        state.appendFinal("stale trailing utterance")
+        state.appendFinalIf("old-session", "stale trailing utterance")
         state.start("new-session", 5000L)
 
         state.clearIf("old-session")
@@ -90,7 +90,7 @@ class LiveTranscriptStateTest {
     fun `clearIf clears when the session id still matches`() {
         val state = LiveTranscriptState()
         state.start("s1", 1000L)
-        state.appendFinal("hi")
+        state.appendFinalIf("s1", "hi")
 
         state.clearIf("s1")
 
