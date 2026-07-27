@@ -66,10 +66,16 @@ fun RecordingScreen(viewModel: RecordingViewModel, onBack: () -> Unit) {
     // offset against its content size across recompositions; for a live transcript that's
     // continuously appending, "always follow the tail" is the simpler fix and matches what most
     // chat/log UIs do by default.
+    //
+    // Uses scrollToItem() (an instant jump) rather than animateScrollToItem(): partial-transcript
+    // updates arrive roughly every 80-130ms during continuous speech, which is faster than a
+    // scroll animation typically takes to settle, so an animated scroll was perpetually
+    // restarted mid-flight and never actually finished -- visible jitter with no benefit over an
+    // instant jump.
     LaunchedEffect(snapshot.finalLines.size, snapshot.partialLine) {
         val lastIndex = snapshot.finalLines.size + (if (snapshot.partialLine != null) 1 else 0) - 1
         if (lastIndex >= 0) {
-            listState.animateScrollToItem(lastIndex)
+            listState.scrollToItem(lastIndex)
         }
     }
 
