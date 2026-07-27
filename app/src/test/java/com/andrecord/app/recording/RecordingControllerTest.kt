@@ -53,6 +53,44 @@ class RecordingControllerTest {
         db.close()
     }
 
+    /**
+     * `state` is the single source of truth every observer (the persistent recording bar, the
+     * FAB, RecordingViewModel) reads from directly now, rather than each maintaining its own
+     * mirror that only updated when it happened to be the one driving the change. Assert it
+     * behaves like the StateFlow it claims to be: `.value` reflects the latest transition, and it
+     * agrees with `currentState()`.
+     */
+    @Test
+    fun `state StateFlow value tracks every transition and matches currentState`() = runTest {
+        val starter = FakeServiceStarter()
+        val (controller, db) = buildController(starter)
+
+        assertEquals(RecordingState.IDLE, controller.state.value)
+        assertEquals(controller.currentState(), controller.state.value)
+
+        controller.toggle()
+        assertEquals(RecordingState.RECORDING, controller.state.value)
+        assertEquals(controller.currentState(), controller.state.value)
+
+        controller.toggle()
+        assertEquals(RecordingState.IDLE, controller.state.value)
+        assertEquals(controller.currentState(), controller.state.value)
+        db.close()
+    }
+
+    @Test
+    fun `reportRecordingEnded is reflected on the state StateFlow`() = runTest {
+        val starter = FakeServiceStarter()
+        val (controller, db) = buildController(starter)
+        controller.toggle()
+        assertEquals(RecordingState.RECORDING, controller.state.value)
+
+        controller.reportRecordingEnded()
+
+        assertEquals(RecordingState.IDLE, controller.state.value)
+        db.close()
+    }
+
     @Test
     fun `toggle again while recording stops it`() = runTest {
         val starter = FakeServiceStarter()

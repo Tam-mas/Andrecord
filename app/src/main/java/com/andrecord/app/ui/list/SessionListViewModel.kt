@@ -50,8 +50,11 @@ class SessionListViewModel(
             }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
 
-    private val _recordingState = MutableStateFlow(recordingController.currentState())
-    val recordingState: StateFlow<RecordingState> = _recordingState
+    // RecordingController.state is already the single source of truth (a hot StateFlow kept
+    // alive by the controller itself, not a cold/Room-backed flow), so this is exposed directly
+    // rather than mirrored into a local var -- a local copy is exactly what used to go stale
+    // whenever a recording started or stopped some way other than this screen's own FAB tap.
+    val recordingState: StateFlow<RecordingState> = recordingController.state
 
     // Seeded eagerly from the current system/prefs state so the banner doesn't flash visible on
     // first composition when the service is already enabled or was already dismissed; refreshed
@@ -62,7 +65,7 @@ class SessionListViewModel(
 
     fun onRecordButtonClick() {
         viewModelScope.launch {
-            _recordingState.value = recordingController.toggle()
+            recordingController.toggle()
         }
     }
 

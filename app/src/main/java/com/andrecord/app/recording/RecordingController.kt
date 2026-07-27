@@ -2,6 +2,8 @@ package com.andrecord.app.recording
 
 import com.andrecord.app.data.SessionRepository
 import java.util.UUID
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 
 class RecordingController(
     private val repository: SessionRepository,
@@ -9,14 +11,23 @@ class RecordingController(
     private val idGenerator: () -> String = { UUID.randomUUID().toString() },
     private val clock: () -> Long = { System.currentTimeMillis() }
 ) {
-    @Volatile
-    private var state: RecordingState = RecordingState.IDLE
+    private val _state = MutableStateFlow(RecordingState.IDLE)
+
+    /**
+     * Single source of truth for "is a recording currently active", observed directly by
+     * SessionListViewModel (persistent bar + FAB) and RecordingViewModel (live view) so every
+     * path that starts/stops a recording -- this class's own toggle(), a volume-key/Quick-Tap
+     * trigger, the recording notification's Stop action, or a mid-recording failure -- is
+     * reflected everywhere at once instead of leaving other observers on a stale local copy.
+     */
+    val state: StateFlow<RecordingState> = _state
+
     private var activeSessionId: String? = null
 
-    fun currentState(): RecordingState = state
+    fun currentState(): RecordingState = _state.value
 
     suspend fun toggle(): RecordingState {
-        return if (state == RecordingState.IDLE) start() else stop()
+        return if (_state.value == RecordingState.IDLE) start() else stop()
     }
 
     /**
@@ -33,7 +44,7 @@ class RecordingController(
      */
     fun reportRecordingEnded() {
         activeSessionId = null
-        state = RecordingState.IDLE
+        _state.value = RecordingState.IDLE
     }
 
     private suspend fun start(): RecordingState {
@@ -43,15 +54,15 @@ class RecordingController(
         // Set before handing off to the service: the service can report a start failure back to
         // us (see reportRecordingEnded) as soon as it processes the start intent, and that reset
         // must not be clobbered by a late assignment here.
-        state = RecordingState.RECORDING
+        _state.value = RecordingState.RECORDING
         serviceStarter.startRecording(id)
-        return state
+        return _state.value
     }
 
     private suspend fun stop(): RecordingState {
         serviceStarter.stopRecording()
         activeSessionId = null
-        state = RecordingState.IDLE
-        return state
+        _state.value = RecordingState.IDLE
+        return _state.value
     }
 }
