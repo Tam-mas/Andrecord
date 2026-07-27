@@ -7,10 +7,12 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.andrecord.app.asr.AsrEvent
 import com.andrecord.app.asr.SherpaOnnxStreamingAsrEngine
+import com.andrecord.app.asr.SherpaOnnxWavFileReader
+import com.andrecord.app.asr.SherpaOnnxWhisperAsrEngine
 import com.andrecord.app.data.AndrecordDatabase
 import com.andrecord.app.data.SessionRepository
 import com.andrecord.app.diarization.SherpaOnnxDiarizationEngine
-import com.andrecord.app.workers.DiarizationWorker
+import com.andrecord.app.workers.TranscriptionWorker
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -19,15 +21,28 @@ import org.junit.runner.RunWith
 import java.io.File
 
 /**
- * End-to-end, on-device check that a recording's transcript is written exactly once.
+ * End-to-end, on-device check of the real recording -> transcript pipeline, using the real
+ * sherpa-onnx streaming ASR, offline diarization, and offline Whisper engines together -- not the
+ * fakes the Robolectric unit tests use. This is the only test in the project that exercises all
+ * three native engines in combination.
  *
- * This replays the real two-speaker fixture WAV through the real sherpa-onnx ASR and
- * diarization engines in exactly the shape RecordingService's capture loop uses it -- accumulate
- * finals, flush every 5 seconds of audio, drain once more after stop(), final flush, then run
- * DiarizationWorker's alignment -- because the duplication bug this guards against only appeared
- * once a recording outlived a single flush interval. It substitutes the fixture for the
- * microphone: the emulator's virtual mic records silence, so a real mic-driven run produces no
- * transcript at all and proves nothing about duplication.
+ * Originally written against `DiarizationWorker`, which aligned RecordingService's live-flushed
+ * ASR segments against diarization output, so the natural invariant to check was "diarization
+ * labels the flushed rows in place, it does not add a second labeled copy alongside them" --
+ * flushed-row-count and text had to match aligned-row-count and text exactly. `TranscriptionWorker`
+ * (see plan docs/superpowers/plans/2026-07-27-transcript-refinement.md) replaced that: it diarizes
+ * the WAV, chunks the result via WhisperChunker, and transcribes each chunk fresh via Whisper --
+ * it no longer reads the flushed rows at all, so there is no longer a 1:1 mapping between flushed
+ * rows and the final transcript to assert on. The flush-cycle simulation below is kept (it still
+ * exercises a real, unchanged part of the app -- RecordingService.flushSegments() with a real
+ * streaming ASR engine), but the "written exactly once" guard is now checked by running
+ * TranscriptionWorker's real pipeline twice against the same session (simulating a WorkManager
+ * retry) and asserting the second run reproduces the first exactly rather than duplicating or
+ * drifting -- the same spirit as the original test, retargeted at the function that actually
+ * owns finalizing a session's transcript today.
+ *
+ * It substitutes the fixture for the microphone: the emulator's virtual mic records silence, so a
+ * real mic-driven run produces no transcript at all and proves nothing about duplication.
  *
  * Native sherpa-onnx .so files mean this cannot run under Robolectric; run with
  * `./gradlew :app:connectedDebugAndroidTest`.
@@ -54,6 +69,9 @@ class TranscriptPipelineInstrumentedTest {
             audioFilePath = wavFile.absolutePath, audioDeleteAt = Long.MAX_VALUE
         )
 
+        // Real streaming ASR, replayed against the real fixture the same way RecordingService's
+        // capture loop would -- proves the live-flush mechanism itself still works, independent of
+        // whether TranscriptionWorker ends up reading these rows.
         val asrEngine = SherpaOnnxStreamingAsrEngine(appContext)
         asrEngine.start()
         val pending = mutableListOf<AsrEvent.Final>()
@@ -71,8 +89,6 @@ class TranscriptPipelineInstrumentedTest {
                 flushCount++
             }
         }
-        // Mirrors the service's teardown: stop() drains the trailing hypothesis, one more poll
-        // picks it up, and a final flush makes everything durable before diarization runs.
         asrEngine.stop()
         drainInto(asrEngine, pending)
         RecordingService.flushSegments(repository, sessionId, pending)
@@ -82,36 +98,45 @@ class TranscriptPipelineInstrumentedTest {
             "TranscriptPipelineTest",
             "flushes=$flushCount flushedRows=${flushed.size} " + flushed.joinToString { "[${it.startMs}-${it.endMs}] ${it.text}" }
         )
+        assertTrue("Expected more than one flush cycle, got $flushCount", flushCount > 1)
+        assertTrue("Expected some flushed rows from live capture", flushed.isNotEmpty())
 
-        val speakerCount = DiarizationWorker.runDiarization(
-            repository, SherpaOnnxDiarizationEngine(appContext), sessionId, wavFile.absolutePath
+        // The real pipeline: diarize the WAV, chunk it, transcribe each chunk via real Whisper.
+        val speakerCount = TranscriptionWorker.runTranscription(
+            repository,
+            SherpaOnnxDiarizationEngine(appContext),
+            SherpaOnnxWhisperAsrEngine(appContext),
+            SherpaOnnxWavFileReader(),
+            sessionId,
+            wavFile.absolutePath
         )
-        val aligned = repository.getSegmentsOnce(sessionId)
+        val firstRun = repository.getSegmentsOnce(sessionId)
         Log.i(
             "TranscriptPipelineTest",
-            "speakerCount=$speakerCount alignedRows=${aligned.size} " + aligned.joinToString { "[${it.speakerLabel}] ${it.text}" }
+            "speakerCount=$speakerCount segments=${firstRun.size} " + firstRun.joinToString { "[${it.speakerLabel}] ${it.text}" }
         )
 
-        assertTrue("Expected more than one flush cycle, got $flushCount", flushCount > 1)
-        assertTrue("Expected a non-empty transcript", flushed.isNotEmpty())
-        // The core assertion: diarization labels the flushed rows in place, it does not add a
-        // second labeled copy alongside them.
-        assertEquals(flushed.size, aligned.size)
-        assertEquals(flushed.map { it.text }, aligned.map { it.text })
-        assertEquals(
-            "Duplicated utterances: " + aligned.map { it.text },
-            aligned.map { it.startMs to it.text }.distinct().size,
-            aligned.size
-        )
+        assertTrue("Expected at least 2 distinct speakers, got $speakerCount", (speakerCount ?: 0) >= 2)
+        assertTrue("Expected a non-empty transcript from the real pipeline", firstRun.isNotEmpty())
+        assertTrue("Expected every segment to have real (non-blank) text", firstRun.all { it.text.isNotBlank() })
+        assertTrue("Expected every segment to have a speaker label", firstRun.all { it.speakerLabel != null })
 
-        // ...and a WorkManager retry re-derives rather than accumulates.
-        DiarizationWorker.runDiarization(
-            repository, SherpaOnnxDiarizationEngine(appContext), sessionId, wavFile.absolutePath
+        // A WorkManager retry re-derives the transcript from scratch rather than accumulating a
+        // second copy alongside the first -- this is the "written exactly once" guarantee,
+        // exercised here against the real native engines rather than the unit test's fakes.
+        TranscriptionWorker.runTranscription(
+            repository,
+            SherpaOnnxDiarizationEngine(appContext),
+            SherpaOnnxWhisperAsrEngine(appContext),
+            SherpaOnnxWavFileReader(),
+            sessionId,
+            wavFile.absolutePath
         )
-        val afterRetry = repository.getSegmentsOnce(sessionId)
-        assertEquals(aligned.size, afterRetry.size)
-        assertEquals(aligned.map { it.text }, afterRetry.map { it.text })
-        assertEquals(aligned.map { it.speakerLabel }, afterRetry.map { it.speakerLabel })
+        val secondRun = repository.getSegmentsOnce(sessionId)
+
+        assertEquals("Retry should not change the segment count", firstRun.size, secondRun.size)
+        assertEquals("Retry should reproduce the same text", firstRun.map { it.text }, secondRun.map { it.text })
+        assertEquals("Retry should reproduce the same speaker labels", firstRun.map { it.speakerLabel }, secondRun.map { it.speakerLabel })
 
         db.close()
     }

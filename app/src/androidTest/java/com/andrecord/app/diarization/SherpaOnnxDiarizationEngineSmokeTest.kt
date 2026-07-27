@@ -48,7 +48,7 @@ class SherpaOnnxDiarizationEngineSmokeTest {
         }
 
         val segments = engine.diarize(wavFile.absolutePath)
-        val speakerCount = TranscriptAligner.speakerCount(segments)
+        val speakerCount = segments.map { it.speakerIndex }.distinct().size
 
         Log.i(
             "SherpaDiarizationSmokeTest",
