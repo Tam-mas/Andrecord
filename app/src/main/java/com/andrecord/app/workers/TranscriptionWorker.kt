@@ -110,7 +110,7 @@ class TranscriptionWorker(context: Context, params: WorkerParameters) : Coroutin
     private fun notifyFailed(sessionId: String) {
         val manager = applicationContext.getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(
-            NotificationChannel(CHANNEL_ID, "Transcript ready", NotificationManager.IMPORTANCE_DEFAULT)
+            NotificationChannel(CHANNEL_ID, "Transcript processing failed", NotificationManager.IMPORTANCE_DEFAULT)
         )
         val notification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_dialog_alert)
