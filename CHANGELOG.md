@@ -1,5 +1,12 @@
 # Changelog
 
+### [2026-07-27 17:25] Fixed
+
+**Tech:** `RecordingScreen` — auto-scroll `LaunchedEffect` switched from `animateScrollToItem()` to `scrollToItem()`  
+**Dev:** Partial-transcript updates arrive roughly every 80-130ms during continuous speech, which is faster than a scroll animation typically takes to settle, so the animated scroll added in the 16:55 fix was continually restarted mid-flight and never actually finished -- visible jitter with no benefit over an instant jump. `scrollToItem()` performs the same "jump to `lastIndex`" without animating, which is strictly more robust for a feed that updates faster than a typical scroll-animation duration. Not unit tested, same as the original auto-scroll change: pure Compose scroll behavior with no Compose UI test harness set up in this project.  
+**Plain:** The live transcript's auto-scroll now jumps straight to the newest line instead of visibly stuttering while it tries (and fails) to animate there.  
+**Why:** The animated auto-scroll added earlier looked janky during continuous speech because new lines kept arriving before the animation finished -- an instant scroll fixes that without giving anything up.
+
 ### [2026-07-27 17:15] Changed
 
 **Tech:** `LiveTranscriptState.appendFinal()`/`updatePartial()`/`clear()` — visibility narrowed to `private`  
