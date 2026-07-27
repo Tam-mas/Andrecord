@@ -65,4 +65,77 @@ class LiveTranscriptStateTest {
 
         assertEquals(LiveTranscriptSnapshot(), state.snapshot.value)
     }
+
+    /**
+     * Regression test for a stop-then-immediate-restart race: the old session's teardown (running
+     * on its own coroutine) reaching clear() after a new recording's start() has already run must
+     * not wipe out the new recording's startTime/transcript for the rest of its duration.
+     */
+    @Test
+    fun `clearIf is a no-op when a newer session has already started`() {
+        val state = LiveTranscriptState()
+        state.start("old-session", 1000L)
+        state.appendFinal("stale trailing utterance")
+        state.start("new-session", 5000L)
+
+        state.clearIf("old-session")
+
+        val snapshot = state.snapshot.value
+        assertEquals("new-session", snapshot.sessionId)
+        assertEquals(5000L, snapshot.startTime)
+        assertEquals(emptyList<String>(), snapshot.finalLines)
+    }
+
+    @Test
+    fun `clearIf clears when the session id still matches`() {
+        val state = LiveTranscriptState()
+        state.start("s1", 1000L)
+        state.appendFinal("hi")
+
+        state.clearIf("s1")
+
+        assertEquals(LiveTranscriptSnapshot(), state.snapshot.value)
+    }
+
+    @Test
+    fun `appendFinalIf is a no-op when a newer session has already started`() {
+        val state = LiveTranscriptState()
+        state.start("old-session", 1000L)
+        state.start("new-session", 5000L)
+
+        state.appendFinalIf("old-session", "stale trailing utterance")
+
+        assertEquals(emptyList<String>(), state.snapshot.value.finalLines)
+    }
+
+    @Test
+    fun `appendFinalIf appends when the session id still matches`() {
+        val state = LiveTranscriptState()
+        state.start("s1", 1000L)
+
+        state.appendFinalIf("s1", "hello there")
+
+        assertEquals(listOf("hello there"), state.snapshot.value.finalLines)
+    }
+
+    @Test
+    fun `updatePartialIf is a no-op when a newer session has already started`() {
+        val state = LiveTranscriptState()
+        state.start("old-session", 1000L)
+        state.start("new-session", 5000L)
+
+        state.updatePartialIf("old-session", "stale partial")
+
+        assertNull(state.snapshot.value.partialLine)
+    }
+
+    @Test
+    fun `updatePartialIf updates when the session id still matches`() {
+        val state = LiveTranscriptState()
+        state.start("s1", 1000L)
+
+        state.updatePartialIf("s1", "hello")
+
+        assertEquals("hello", state.snapshot.value.partialLine)
+    }
 }

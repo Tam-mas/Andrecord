@@ -216,7 +216,7 @@ class RecordingService : Service() {
                     out.write(shortArrayToBytes(buffer, read))
 
                     container.streamingAsrEngine.acceptWaveform(floatSamples)
-                    drainAsrEvents(container, pendingSegments)
+                    drainAsrEvents(container, id, pendingSegments)
 
                     if (System.currentTimeMillis() - lastFlush > FLUSH_INTERVAL_MS) {
                         flushPendingSegments(id, pendingSegments)
@@ -251,9 +251,9 @@ class RecordingService : Service() {
                 // observe it: stopRecording() only joins this job.
                 step("Stopping transcription") {
                     container.streamingAsrEngine.stop()
-                    drainAsrEvents(container, pendingSegments)
+                    drainAsrEvents(container, id, pendingSegments)
                 }
-                step("Clearing the live transcript") { container.liveTranscriptState.clear() }
+                step("Clearing the live transcript") { container.liveTranscriptState.clearIf(id) }
             }
 
             // Final flush. The 5-second cadence above always leaves a tail unwritten, and
@@ -316,15 +316,20 @@ class RecordingService : Service() {
         return stat.availableBytes > MIN_FREE_BYTES
     }
 
-    private fun drainAsrEvents(container: AppContainer, into: MutableList<AsrEvent.Final>) {
+    // sessionId is passed through (rather than reading the service's own volatile `sessionId`
+    // field, which can already have moved on) so that late events -- e.g. the one extra poll
+    // stop() performs to drain sherpa-onnx's trailing hypothesis in the finally block below --
+    // that fire after a new recording has already started on this same service instance can't be
+    // misattributed to that new recording's live transcript. See LiveTranscriptState.clearIf.
+    private fun drainAsrEvents(container: AppContainer, sessionId: String, into: MutableList<AsrEvent.Final>) {
         var event = container.streamingAsrEngine.poll()
         while (event != null) {
             when (val e = event!!) {
                 is AsrEvent.Final -> {
                     into.add(e)
-                    container.liveTranscriptState.appendFinal(e.text)
+                    container.liveTranscriptState.appendFinalIf(sessionId, e.text)
                 }
-                is AsrEvent.Partial -> container.liveTranscriptState.updatePartial(e.text)
+                is AsrEvent.Partial -> container.liveTranscriptState.updatePartialIf(sessionId, e.text)
             }
             event = container.streamingAsrEngine.poll()
         }
