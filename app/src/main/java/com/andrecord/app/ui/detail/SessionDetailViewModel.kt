@@ -31,6 +31,10 @@ class SessionDetailViewModel(
         viewModelScope.launch { repository.delete(sessionId) }
     }
 
+    fun retry() {
+        viewModelScope.launch { repository.retryProcessing(sessionId) }
+    }
+
     fun buildShareText(): String = buildShareText(segments.value)
 
     companion object {

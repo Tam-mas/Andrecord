@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -31,6 +32,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.andrecord.app.data.SessionStatus
 import com.andrecord.app.ui.components.SpeakerTimelineStrip
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -100,9 +102,19 @@ fun SessionDetailScreen(viewModel: SessionDetailViewModel, onDeleted: () -> Unit
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp)) {
             session?.let { s ->
-                Text(text = "${s.durationMs?.div(60000) ?: 0} min · ${s.speakerCount ?: 0} speakers",
-                    style = MaterialTheme.typography.labelSmall)
-                SpeakerTimelineStrip(segments = segments, modifier = Modifier.padding(vertical = 8.dp))
+                if (s.status == SessionStatus.ERROR && s.audioFilePath != null) {
+                    Text(
+                        text = "Transcript processing failed",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Button(onClick = { viewModel.retry() }, modifier = Modifier.padding(vertical = 8.dp)) {
+                        Text("Retry")
+                    }
+                } else {
+                    Text(text = "${s.durationMs?.div(60000) ?: 0} min · ${s.speakerCount ?: 0} speakers",
+                        style = MaterialTheme.typography.labelSmall)
+                    SpeakerTimelineStrip(segments = segments, modifier = Modifier.padding(vertical = 8.dp))
+                }
             }
             LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 items(segments) { segment ->
