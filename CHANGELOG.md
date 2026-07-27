@@ -1,5 +1,12 @@
 # Changelog
 
+### [2026-07-27 16:15] Fixed
+
+**Tech:** `RecordingViewModel.onStopClick()`, `RecordingScreen` — guard Stop against a superseded recording, auto-navigate on external state change  
+**Dev:** `onStopClick()` no longer calls `recordingController.toggle()` unconditionally; `toggle()` is the controller's only public state transition, so it's now only invoked when `recordingController.state.value == RecordingState.RECORDING`, making a Stop tap that loses the race against some other stop path a no-op instead of starting a fresh recording from IDLE. `RecordingViewModel` exposes `recordingState: StateFlow<RecordingState>` from the same `recordingController.state`. `RecordingScreen` collects it and adds `LaunchedEffect(recordingState) { if (recordingState != RecordingState.RECORDING) onBack() }` so the live view exits itself the moment the recording ends via any path, not just its own Stop button (which still calls `onBack()` directly too, for immediate feedback rather than waiting on the async toggle). Added `RecordingViewModelTest` (new file) covering both the guarded no-op case and the normal stop case.  
+**Plain:** The live recording screen's Stop button no longer risks starting an unnoticed second recording if the recording already ended some other way, and the screen now closes itself automatically if the recording ends while you're still looking at it.  
+**Why:** If you stopped recording via the volume key or the notification and then tapped Stop on the live screen anyway (not realizing it had already ended), it used to silently start a brand new recording running in the background while you thought you were back at the list -- this closes that gap.
+
 ### [2026-07-27 16:05] Fixed
 
 **Tech:** `RecordingController.state: StateFlow<RecordingState>`, `SessionListViewModel.recordingState` — single source of truth for recording state  
