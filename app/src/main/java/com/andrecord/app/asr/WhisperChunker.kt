@@ -37,8 +37,16 @@ object WhisperChunker {
             // padding from claiming the same territory when the gap between them is smaller than
             // 2x PADDING_MS. The midpoint is the furthest either side can go without the two
             // padded chunks overlapping each other.
-            val leftBound = if (prev != null) (prev.endMs + segment.startMs) / 2 else 0L
-            val rightBound = if (next != null) (segment.endMs + next.startMs) / 2 else totalDurationMs
+            // Diarization segments are assumed non-overlapping above, but pyannote-based
+            // diarization can legitimately emit overlapping segments for simultaneous speech (two
+            // people talking at once). If a neighbor overlaps this segment, the raw midpoint
+            // computation above can land on the wrong side of this segment's own start/end,
+            // clamping paddedStart/paddedEnd into the segment's own real audio span below --
+            // silently truncating real speech instead of just reducing padding. Coercing the bound
+            // to never cross the segment's own span ensures it can only ever reduce padding, never
+            // eat into the segment itself.
+            val leftBound = (if (prev != null) (prev.endMs + segment.startMs) / 2 else 0L).coerceAtMost(segment.startMs)
+            val rightBound = (if (next != null) (segment.endMs + next.startMs) / 2 else totalDurationMs).coerceAtLeast(segment.endMs)
 
             val paddedStart = (segment.startMs - PADDING_MS).coerceAtLeast(leftBound).coerceAtLeast(0L)
             val paddedEnd = (segment.endMs + PADDING_MS).coerceAtMost(rightBound).coerceAtMost(totalDurationMs)
@@ -51,11 +59,15 @@ object WhisperChunker {
                 continue
             }
 
+            // Sub-split chunks overlap by PADDING_MS (same constant used for segment-edge padding
+            // above) rather than butt-joining at exactly `end`: for a long uninterrupted monologue,
+            // every internal boundary is otherwise a hard cut with zero protection against landing
+            // mid-word, unlike segment edges which have padding for exactly this reason.
             var cursor = paddedStart
             while (cursor < paddedEnd) {
                 val end = (cursor + MAX_CHUNK_MS).coerceAtMost(paddedEnd)
                 chunks.add(Chunk(cursor, end, segment.speakerIndex))
-                cursor = end
+                cursor = if (end >= paddedEnd) end else end - PADDING_MS
             }
         }
 
