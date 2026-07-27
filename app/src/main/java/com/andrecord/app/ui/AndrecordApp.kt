@@ -9,6 +9,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.andrecord.app.AppContainer
@@ -25,16 +27,31 @@ import com.andrecord.app.ui.settings.SettingsViewModel
 
 private enum class TopLevelDestination { LIST_DETAIL, RECORDING, SETTINGS }
 
+// MainActivity declares no android:configChanges, so folding/unfolding this app's primary target
+// foldable (or rotating) destroys and recreates the Activity/Composition. Without a Saver here,
+// TopLevelDestination's plain `remember` would reset to LIST_DETAIL on every such recreation --
+// bouncing the user back to the list mid-live-view or mid-Settings. Storing the enum's `name`
+// keeps this a single line at the call site rather than switching every assignment in this file
+// over to a raw String.
+private val TopLevelDestinationSaver = Saver<TopLevelDestination, String>(
+    save = { it.name },
+    restore = { TopLevelDestination.valueOf(it) }
+)
+
 @OptIn(ExperimentalMaterial3AdaptiveApi::class)
 @Composable
 fun AndrecordApp(container: AppContainer) {
     val navigator = rememberListDetailPaneScaffoldNavigator<Any>()
-    var selectedSessionId by remember { mutableStateOf<String?>(null) }
+    var selectedSessionId by rememberSaveable { mutableStateOf<String?>(null) }
 
     // If a recording is already running when the app opens (e.g. started via Quick Tap or the
     // volume-key hold while the app was closed), land on the live recording screen by default --
     // configurable in Settings for anyone who'd rather see the session list first instead.
-    var destination by remember {
+    //
+    // This init lambda only runs when there's no saved value to restore (a fresh instance), the
+    // same as plain `remember` -- so a restored RECORDING/SETTINGS destination after a fold/rotate
+    // is never silently overwritten by this recording-state check on recomposition.
+    var destination by rememberSaveable(stateSaver = TopLevelDestinationSaver) {
         mutableStateOf(
             if (container.recordingController.currentState() == RecordingState.RECORDING &&
                 container.appSettings.getReopenBehavior() == ReopenBehavior.LIVE_VIEW
