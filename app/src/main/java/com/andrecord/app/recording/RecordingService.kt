@@ -10,6 +10,7 @@ import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.media.AudioFormat
+import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.Build
@@ -119,7 +120,7 @@ class RecordingService : Service() {
 
         val record = try {
             AudioRecord(
-                MediaRecorder.AudioSource.MIC, SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO,
+                resolveAudioSource(), SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT, minBufferSize * 2
             )
         } catch (e: IllegalArgumentException) {
@@ -299,6 +300,21 @@ class RecordingService : Service() {
                 }
             }
         }
+    }
+
+    /**
+     * VOICE_RECOGNITION requests the device's audio HAL disable or minimize AGC/noise
+     * suppression tuned for phone calls, which otherwise fights transcription accuracy for
+     * far-field, multi-speaker meeting capture. UNPROCESSED (raw, no platform audio effects
+     * at all) is even better for ASR when the device advertises real support for it -- not
+     * all devices do, and requesting it on one that doesn't silently degrades to normal
+     * processing on some OEM audio HALs, so check the documented capability query first
+     * rather than assuming.
+     */
+    private fun resolveAudioSource(): Int {
+        val audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
+        val unprocessedSupported = audioManager.getProperty(AudioManager.PROPERTY_SUPPORT_AUDIO_SOURCE_UNPROCESSED) == "true"
+        return if (unprocessedSupported) MediaRecorder.AudioSource.UNPROCESSED else MediaRecorder.AudioSource.VOICE_RECOGNITION
     }
 
     private fun releaseAudioRecord(record: AudioRecord) {

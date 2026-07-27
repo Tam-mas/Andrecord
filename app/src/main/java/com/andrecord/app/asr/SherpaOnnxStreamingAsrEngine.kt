@@ -44,6 +44,8 @@ class SherpaOnnxStreamingAsrEngine(private val context: Context) : StreamingAsrE
                 modelType = "zipformer2",
                 numThreads = 2,
             ),
+            decodingMethod = "modified_beam_search",
+            maxActivePaths = 4,
         )
         recognizer = OnlineRecognizer(assetManager = context.assets, config = config)
         stream = recognizer.createStream()
