@@ -21,6 +21,16 @@ android {
     buildFeatures {
         compose = true
     }
+    androidResources {
+        // The bundled Whisper/diarization/streaming-ASR .onnx assets are large (hundreds of MB
+        // combined); deflate-compressing them in the APK forces the OS to fully decompress each
+        // one into RAM before the ONNX runtime can even read it, roughly doubling peak load-time
+        // memory. Storing them uncompressed instead trades a real increase in APK/download size
+        // (measured ~130MB larger on this app's debug build, since these files do compress
+        // meaningfully -- 30-37% smaller for the int8 Whisper weights) for materially safer
+        // peak RAM usage at load time, which matters more on a memory-constrained device.
+        noCompress += listOf("onnx")
+    }
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.14"
     }
