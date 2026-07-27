@@ -1,5 +1,12 @@
 # Changelog
 
+### [2026-07-27 17:15] Changed
+
+**Tech:** `LiveTranscriptState.appendFinal()`/`updatePartial()`/`clear()` — visibility narrowed to `private`  
+**Dev:** These unguarded methods had zero production callers left after the 16:25 fix switched `RecordingService` to the session-scoped `appendFinalIf`/`updatePartialIf`/`clearIf` variants that wrap them; only `LiveTranscriptStateTest` still called them directly. Narrowed all three to `private` (rather than `internal`) since every direct test call had a trivial, equivalent substitution through the matching `*If` variant with the session id already established in that test (e.g. `state.start("s1", ...)` then `clearIf("s1")` instead of bare `clear()`) -- no test's coverage relied on the low-level method's behavior in isolation, so nothing was lost. Updated `LiveTranscriptStateTest` accordingly.  
+**Plain:** Internal cleanup only -- no user-visible behavior change.  
+**Why:** An unguarded method sitting right next to its safe, session-checked counterpart is an easy mistake to make at a future call site; sealing it off once it had no real callers removes that footgun.
+
 ### [2026-07-27 17:05] Fixed
 
 **Tech:** `RecordingController.reportRecordingEnded(sessionId)`, `RecordingService.stopRecording()` — session-scoped guard on the notification-Stop teardown path  
