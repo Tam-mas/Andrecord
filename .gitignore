@@ -19,3 +19,10 @@ captures/
 
 # macOS
 .DS_Store
+
+# Whisper model files exceed GitHub's 100MB per-file push limit (encoder ~112MB, decoder
+# ~262MB even int8-quantized). Stripped from git history on 2026-07-27; kept locally on disk
+# only. A fresh clone of this repo needs these copied back in manually from a backup before
+# the app will build -- see /Users/tam/Documents/Andrecord-model-backups/ on this machine.
+app/src/main/assets/models/asr_offline/small.en-encoder.onnx
+app/src/main/assets/models/asr_offline/small.en-decoder.onnx
