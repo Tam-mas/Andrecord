@@ -6,7 +6,9 @@ import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import com.andrecord.app.accessibility.AccessibilityServiceStatus
+import com.andrecord.app.asr.OfflineAsrEngine
 import com.andrecord.app.asr.SherpaOnnxStreamingAsrEngine
+import com.andrecord.app.asr.SherpaOnnxWhisperAsrEngine
 import com.andrecord.app.asr.StreamingAsrEngine
 import com.andrecord.app.data.AndrecordDatabase
 import com.andrecord.app.data.SessionRepository
@@ -38,6 +40,7 @@ class AppContainer(app: Application) {
 
     lateinit var streamingAsrEngine: StreamingAsrEngine
     lateinit var diarizationEngine: DiarizationEngine
+    lateinit var whisperAsrEngine: OfflineAsrEngine
     lateinit var recordingController: RecordingController
 }
 
@@ -56,6 +59,7 @@ class AndrecordApplication : Application(), Configuration.Provider {
         container = AppContainer(this)
         container.streamingAsrEngine = SherpaOnnxStreamingAsrEngine(this)
         container.diarizationEngine = SherpaOnnxDiarizationEngine(this)
+        container.whisperAsrEngine = SherpaOnnxWhisperAsrEngine(this)
         container.recordingController = RecordingController(container.sessionRepository, AndroidRecordingServiceStarter(this))
         reconcileInterruptedSessions()
         scheduleRetention()

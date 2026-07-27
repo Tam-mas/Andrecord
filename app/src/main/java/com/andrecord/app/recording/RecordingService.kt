@@ -26,7 +26,7 @@ import com.andrecord.app.AppContainer
 import com.andrecord.app.asr.AsrEvent
 import com.andrecord.app.data.SessionRepository
 import com.andrecord.app.data.TranscriptSegment
-import com.andrecord.app.workers.DiarizationWorker
+import com.andrecord.app.workers.TranscriptionWorker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -435,17 +435,7 @@ class RecordingService : Service() {
                 audioFilePath = file.absolutePath,
                 audioDeleteAt = endTime + TimeUnit.DAYS.toMillis(7)
             )
-            val request = OneTimeWorkRequestBuilder<DiarizationWorker>()
-                .setInputData(
-                    Data.Builder()
-                        .putString(DiarizationWorker.KEY_SESSION_ID, id)
-                        .putString(DiarizationWorker.KEY_WAV_PATH, file.absolutePath)
-                        .putLong(DiarizationWorker.KEY_DURATION_MS, durationMs)
-                        .putLong(DiarizationWorker.KEY_START_TIME, startTime)
-                        .build()
-                )
-                .build()
-            WorkManager.getInstance(applicationContext).enqueue(request)
+            TranscriptionWorker.enqueue(applicationContext, id, file.absolutePath, durationMs, startTime)
             ServiceCompat.stopForeground(this@RecordingService, Service.STOP_FOREGROUND_REMOVE)
             stopSelf()
         }
