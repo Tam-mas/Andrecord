@@ -22,6 +22,10 @@ class RecordingController(
      */
     val state: StateFlow<RecordingState> = _state
 
+    // Volatile: written from Main (toggle()/start()/stop()) and from Dispatchers.Default (the
+    // notification-Stop teardown coroutine in RecordingService, and the capture loop's failure
+    // path), with no other synchronization between those threads.
+    @Volatile
     private var activeSessionId: String? = null
 
     fun currentState(): RecordingState = _state.value

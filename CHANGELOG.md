@@ -1,5 +1,12 @@
 # Changelog
 
+### [2026-07-27 17:35] Fixed
+
+**Tech:** `RecordingController.activeSessionId` — marked `@Volatile`  
+**Dev:** The 17:05 fix gave `activeSessionId` its first reader (`reportRecordingEnded(sessionId)`), but the field itself was still a plain `private var`. It's written from Main (`toggle()`/`start()`/`stop()`) and read from `Dispatchers.Default` (the notification-Stop teardown coroutine in `RecordingService`), with no other synchronization between those threads -- so without `@Volatile`, the JMM permitted the teardown coroutine to observe a stale value and let the exact race the 17:05 fix was meant to close through anyway. Every analogous cross-thread field in `RecordingService.kt` (`sessionId`, `wavFile`, `failedSessionId`, `stopRequested`, `stopping`) is already annotated for this same reason; this field was the odd one out until now. Verified via `RecordingControllerTest` (9 tests, all passing) -- reference assignment is atomic so there's no torn-read risk, only the staleness `@Volatile` fixes.  
+**Plain:** Internal correctness fix -- no user-visible behavior change, but makes the previous fix actually reliable on real hardware rather than just correct in theory.  
+**Why:** A guard that's logically correct but not properly synchronized across threads can still fail silently on a real device even though it looks right in code and passes single-threaded tests -- this closes that gap.
+
 ### [2026-07-27 17:25] Fixed
 
 **Tech:** `RecordingScreen` — auto-scroll `LaunchedEffect` switched from `animateScrollToItem()` to `scrollToItem()`  
