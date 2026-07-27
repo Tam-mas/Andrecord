@@ -1,5 +1,12 @@
 # Changelog
 
+### [2026-07-27 16:05] Fixed
+
+**Tech:** `RecordingController.state: StateFlow<RecordingState>`, `SessionListViewModel.recordingState` — single source of truth for recording state  
+**Dev:** `RecordingController` replaces its private `var state` with a `MutableStateFlow<RecordingState>` exposed publicly as `state`; `currentState()` is kept as a `= state.value` convenience since `AndrecordApp.kt` and existing tests already call it. `toggle()`, `start()`, `stop()`, and `reportRecordingEnded()` now all write through `_state.value` instead of the old private var. `SessionListViewModel` deletes its own `_recordingState` `MutableStateFlow` (previously seeded once from `currentState()` and only ever updated inside `onRecordButtonClick()`) and exposes `recordingController.state` directly; `onRecordButtonClick()` now just calls `recordingController.toggle()` with no local assignment. Added `RecordingControllerTest` coverage asserting `state.value` tracks every transition (toggle in both directions, `reportRecordingEnded()`) and agrees with `currentState()`, plus a new `SessionListViewModelTest` asserting `recordingState` is the *same* StateFlow instance as the controller's and reflects a `toggle()`/`reportRecordingEnded()` call made directly on the controller — i.e. one this ViewModel's own click handler never touched. Full unit suite passes.  
+**Plain:** The session list's recording indicator (the persistent bar and the record button's icon) now always matches whether a recording is actually running, no matter what started or stopped it.  
+**Why:** Stopping a recording from the live view, a volume-key press, or a mid-recording failure used to leave the session list showing a frozen "Recording… 0:00" bar and the wrong button icon, because only the list screen's own record button ever updated its local copy of the state — this makes the list always reflect reality.
+
 ### [2026-07-27 15:45] Added
 
 **Tech:** `SessionListViewModel.liveTranscriptSnapshot`, `SessionListScreen`'s `TopAppBar` + new `RecordingBar` composable — persistent recording indicator and Settings entry point on the session list  
