@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -40,6 +41,7 @@ fun RecordingScreen(viewModel: RecordingViewModel, onBack: () -> Unit) {
     val snapshot by viewModel.snapshot.collectAsState()
     val recordingState by viewModel.recordingState.collectAsState()
     var now by remember { mutableStateOf(System.currentTimeMillis()) }
+    val listState = rememberLazyListState()
 
     // The recording can end via a path this screen never initiated -- a volume-key/Quick-Tap
     // stop, the recording notification's own Stop action, or a mid-recording failure -- so this
@@ -59,6 +61,18 @@ fun RecordingScreen(viewModel: RecordingViewModel, onBack: () -> Unit) {
         }
     }
 
+    // Always scroll to the newest content. A scroll-position-aware version (only auto-scroll if
+    // the user hasn't manually scrolled up) would be nicer but needs tracking the list's scroll
+    // offset against its content size across recompositions; for a live transcript that's
+    // continuously appending, "always follow the tail" is the simpler fix and matches what most
+    // chat/log UIs do by default.
+    LaunchedEffect(snapshot.finalLines.size, snapshot.partialLine) {
+        val lastIndex = snapshot.finalLines.size + (if (snapshot.partialLine != null) 1 else 0) - 1
+        if (lastIndex >= 0) {
+            listState.animateScrollToItem(lastIndex)
+        }
+    }
+
     Scaffold { padding ->
         Column(
             modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp),
@@ -74,7 +88,7 @@ fun RecordingScreen(viewModel: RecordingViewModel, onBack: () -> Unit) {
             }) {
                 Text("Stop")
             }
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(snapshot.finalLines) { line ->
                     Text(text = line, style = MaterialTheme.typography.bodyLarge)
                 }
