@@ -1,5 +1,12 @@
 # Changelog
 
+### [2026-07-27 16:25] Fixed
+
+**Tech:** `LiveTranscriptState.clearIf()`/`appendFinalIf()`/`updatePartialIf()`, `RecordingService.drainAsrEvents()` — session-scoped guards against a stop-then-restart race  
+**Dev:** `clear()` (called unguarded from `RecordingService`'s teardown `finally` block) had no session-id check, unlike the existing `stillCurrent`/`failedSessionId` pattern used elsewhere in the same file for exactly this "a new recording may already have been started on this same service instance" race. Added `clearIf(sessionId)`, `appendFinalIf(sessionId, text)`, and `updatePartialIf(sessionId, text)` as no-op-unless-`_snapshot.value.sessionId == sessionId` counterparts to the existing (now internal-use) methods; the original unguarded methods are kept as-is. `RecordingService`'s teardown now calls `clearIf(id)`, and `drainAsrEvents()` takes the session id through to `appendFinalIf`/`updatePartialIf` -- the one extra ASR-engine poll performed during teardown to drain the trailing in-progress hypothesis runs on the *old* recording's coroutine and isn't synchronized against a new recording's `start()` on another thread, so without this it could misattribute a trailing utterance to a session that has since been superseded. Extended `LiveTranscriptStateTest` with both the no-op-when-superseded and normal-operation cases for all three guarded methods.  
+**Plain:** Stopping a recording and immediately starting a new one can no longer wipe out the new recording's live transcript or timer, or leak a stray leftover word from the old recording into the new one.  
+**Why:** A fast stop-then-restart (e.g. tapping record twice in quick succession) could silently blank the brand new recording's live view for its entire duration, because the old recording's cleanup ran just late enough to clear state the new recording had already set up.
+
 ### [2026-07-27 16:15] Fixed
 
 **Tech:** `RecordingViewModel.onStopClick()`, `RecordingScreen` — guard Stop against a superseded recording, auto-navigate on external state change  
