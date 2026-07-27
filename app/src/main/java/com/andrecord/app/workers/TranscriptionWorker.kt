@@ -8,6 +8,7 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.work.CoroutineWorker
 import androidx.work.Data
+import androidx.work.ExistingWorkPolicy
 import androidx.work.ForegroundInfo
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
@@ -15,6 +16,7 @@ import androidx.work.WorkerParameters
 import com.andrecord.app.AndrecordApplication
 import com.andrecord.app.asr.OfflineAsrEngine
 import com.andrecord.app.asr.SherpaOnnxWavFileReader
+import com.andrecord.app.asr.SherpaOnnxWhisperAsrEngine
 import com.andrecord.app.asr.WavFileReader
 import com.andrecord.app.asr.WhisperChunker
 import com.andrecord.app.data.SessionRepository
@@ -42,11 +44,19 @@ class TranscriptionWorker(context: Context, params: WorkerParameters) : Coroutin
 
         val container = (applicationContext as AndrecordApplication).container
 
+        // Constructed fresh per worker run (like SherpaOnnxWavFileReader() below) rather than
+        // shared as a process-wide singleton: this engine's release() mutates unsynchronized
+        // internal state, so sharing one instance across concurrent TranscriptionWorker runs
+        // would risk a native use-after-free if one run releases it while another is still
+        // decoding. Owning the instance end-to-end for this run alone makes that race impossible
+        // by construction rather than by adding locking to a shared singleton.
+        val whisperAsrEngine = SherpaOnnxWhisperAsrEngine(applicationContext)
+
         val speakerCount = try {
             runTranscription(
                 container.sessionRepository,
                 container.diarizationEngine,
-                container.whisperAsrEngine,
+                whisperAsrEngine,
                 SherpaOnnxWavFileReader(),
                 sessionId,
                 wavFilePath
@@ -58,7 +68,7 @@ class TranscriptionWorker(context: Context, params: WorkerParameters) : Coroutin
             // Whisper's native model memory (hundreds of MB) is only needed for the duration of
             // this worker run -- release it as soon as we're done, success or failure, rather than
             // holding it for the rest of the app process's lifetime.
-            container.whisperAsrEngine.release()
+            whisperAsrEngine.release()
         }
 
         if (speakerCount == null) {
@@ -219,9 +229,19 @@ class TranscriptionWorker(context: Context, params: WorkerParameters) : Coroutin
             return samples.copyOfRange(startIdx, endIdx)
         }
 
+        /** Stable name for [enqueue]'s unique-work chain -- see [enqueue] for why this work is
+         *  serialized under a single name rather than enqueued in parallel. */
+        private const val UNIQUE_WORK_NAME = "transcription_work"
+
         /** Builds and enqueues the [TranscriptionWorker] request. Shared by RecordingService's
          *  normal post-recording enqueue and by [SessionRepository.retryProcessing], so the
-         *  WorkManager request-building code exists in exactly one place. */
+         *  WorkManager request-building code exists in exactly one place.
+         *
+         *  Enqueued as unique work (APPEND_OR_REPLACE) rather than via plain enqueue(): two
+         *  recordings finishing close together, or the user retrying two failed sessions at once,
+         *  would otherwise run concurrently, each loading its own ~362MB native Whisper model.
+         *  APPEND_OR_REPLACE queues this run after whatever's already running/queued under
+         *  [UNIQUE_WORK_NAME] instead of running them in parallel or dropping one. */
         fun enqueue(context: Context, sessionId: String, wavFilePath: String, durationMs: Long, startTime: Long) {
             val request = OneTimeWorkRequestBuilder<TranscriptionWorker>()
                 .setInputData(
@@ -233,7 +253,8 @@ class TranscriptionWorker(context: Context, params: WorkerParameters) : Coroutin
                         .build()
                 )
                 .build()
-            WorkManager.getInstance(context).enqueue(request)
+            WorkManager.getInstance(context)
+                .enqueueUniqueWork(UNIQUE_WORK_NAME, ExistingWorkPolicy.APPEND_OR_REPLACE, request)
         }
     }
 }
