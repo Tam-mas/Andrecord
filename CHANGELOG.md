@@ -1,5 +1,12 @@
 # Changelog
 
+### [2026-07-27 17:05] Fixed
+
+**Tech:** `RecordingController.reportRecordingEnded(sessionId)`, `RecordingService.stopRecording()` — session-scoped guard on the notification-Stop teardown path  
+**Dev:** The notification-Stop teardown coroutine's call to `reportRecordingEnded()` (added in the 16:35 fix) was unguarded, unlike the analogous mid-recording-failure call ~130 lines below it, which already checks `sessionId == id` before acting (comment: "everything above this point can suspend: a new recording may already have been started on this same service instance"). Teardown (WAV finalize + ASR stop + trailing decode + Room flush) realistically takes 300ms-1.5s, so stopping a recording and starting a new one before that coroutine finishes let the stale call flip the controller back to `IDLE` out from under the new, still-running recording. Added `RecordingController.reportRecordingEnded(sessionId: String)`, a no-op-unless-`activeSessionId == sessionId` counterpart to the existing unguarded overload -- this also gives `activeSessionId` (previously write-only, confirmed dead) its first reader. `RecordingService`'s notification-Stop call site now passes the local `id` it already has in scope. Extended `RecordingControllerTest` with both the stale-id-is-a-no-op case and the matching-id-still-transitions-to-idle case.  
+**Plain:** Stopping a recording and quickly starting a new one no longer risks the old recording's delayed cleanup silently ending the new one's live view.  
+**Why:** Double-tapping the record button (or stopping via the notification and immediately starting a new recording) could make the FAB, the persistent recording bar, and the live transcript screen all think recording had stopped, even though a brand new recording was actively running -- this closes that race.
+
 ### [2026-07-27 16:55] Fixed
 
 **Tech:** `RecordingScreen` — `rememberLazyListState()` + `LaunchedEffect` auto-scroll  
