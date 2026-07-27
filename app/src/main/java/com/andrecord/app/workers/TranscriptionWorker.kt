@@ -4,6 +4,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import android.content.pm.ServiceInfo
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.work.CoroutineWorker
 import androidx.work.Data
@@ -51,6 +52,7 @@ class TranscriptionWorker(context: Context, params: WorkerParameters) : Coroutin
                 wavFilePath
             )
         } catch (e: Exception) {
+            Log.w(TAG, "runTranscription failed for session $sessionId", e)
             null
         }
 
@@ -115,6 +117,7 @@ class TranscriptionWorker(context: Context, params: WorkerParameters) : Coroutin
     }
 
     companion object {
+        private const val TAG = "TranscriptionWorker"
         const val KEY_SESSION_ID = "session_id"
         const val KEY_WAV_PATH = "wav_path"
         const val KEY_DURATION_MS = "duration_ms"
@@ -133,9 +136,12 @@ class TranscriptionWorker(context: Context, params: WorkerParameters) : Coroutin
          *
          * A chunk whose transcription throws gets a [FAILURE_PLACEHOLDER] segment rather than
          * aborting the whole session -- a transcript with one visible gap is better than losing an
-         * entire meeting's transcript to one bad audio slice. If every chunk fails, that's treated
-         * as a systemic problem (not a one-off bad chunk) and this function throws, so the caller's
-         * retry/[SessionRepository.markProcessingFailed] logic in [doWork] applies.
+         * entire meeting's transcript to one bad audio slice. If the end result is zero non-blank
+         * transcript segments -- whether because every chunk threw, every chunk silently returned
+         * blank text, or diarization itself produced zero speaker segments -- that's treated as a
+         * systemic failure (not a one-off bad chunk) and this function throws, so the caller's
+         * retry/[SessionRepository.markProcessingFailed] logic in [doWork] applies rather than
+         * silently finalizing a session to READY with no (or almost no) transcript.
          *
          * `replaceSegments()`'s wholesale replace makes re-running this idempotent across
          * WorkManager retries and manual reprocessing alike.
@@ -155,16 +161,32 @@ class TranscriptionWorker(context: Context, params: WorkerParameters) : Coroutin
             val totalDurationMs = (wave.samples.size.toLong() * 1000L) / wave.sampleRate
             val chunks = WhisperChunker.chunk(totalDurationMs, speakerSegments)
 
-            var successCount = 0
             val transcriptSegments = mutableListOf<TranscriptSegment>()
+            // Counts only chunks that produced real, non-blank Whisper output -- NOT
+            // FAILURE_PLACEHOLDER segments from a thrown exception. Both end up as non-blank
+            // strings in transcriptSegments (a placeholder is deliberately visible in the
+            // transcript rather than silently dropped), so transcriptSegments.isNotEmpty() alone
+            // can't tell "got real output" apart from "every chunk threw" -- which would
+            // silently finalize an all-placeholder transcript as READY, exactly the kind of
+            // silent failure this check exists to prevent.
+            var realSegmentCount = 0
             for (chunk in chunks) {
                 val chunkSamples = sliceSamples(wave.samples, wave.sampleRate, chunk.startMs, chunk.endMs)
-                val text = try {
-                    asrEngine.transcribe(chunkSamples, wave.sampleRate).also { successCount++ }
+                val transcribed = try {
+                    asrEngine.transcribe(chunkSamples, wave.sampleRate)
                 } catch (e: Exception) {
-                    FAILURE_PLACEHOLDER
+                    Log.w(TAG, "Chunk transcription failed for session $sessionId (${chunk.startMs}-${chunk.endMs}ms)", e)
+                    null
                 }
-                if (text.isNotBlank()) {
+                val text = when {
+                    transcribed != null && transcribed.isNotBlank() -> {
+                        realSegmentCount++
+                        transcribed
+                    }
+                    transcribed == null -> FAILURE_PLACEHOLDER
+                    else -> null // transcribed successfully but blank -- dropped, not even a placeholder
+                }
+                if (text != null) {
                     transcriptSegments.add(
                         TranscriptSegment(
                             sessionId = sessionId,
@@ -177,8 +199,8 @@ class TranscriptionWorker(context: Context, params: WorkerParameters) : Coroutin
                 }
             }
 
-            check(chunks.isEmpty() || successCount > 0) {
-                "All ${chunks.size} chunks failed to transcribe for session $sessionId"
+            check(realSegmentCount > 0) {
+                "No transcript segments produced for session $sessionId (${chunks.size} chunks attempted)"
             }
 
             repository.replaceSegments(sessionId, transcriptSegments)

@@ -107,13 +107,25 @@ class TranscriptionWorkerLogicTest {
         val db = buildDb()
         val repo = SessionRepository(db.sessionDao(), db.transcriptSegmentDao()) { }
         repo.createSession("s1", startTime = 0L)
-        repo.markProcessing("s1", endTime = 5000L, durationMs = 5000L, audioFilePath = "/audio/s1.wav", audioDeleteAt = 99_999L)
-        val diarization = FakeDiarizationEngine(listOf(SpeakerSegment(startMs = 0, endMs = 5000, speakerIndex = 0)))
-        val asr = FakeAsrEngine(listOf(""))
+        repo.markProcessing("s1", endTime = 9000L, durationMs = 9000L, audioFilePath = "/audio/s1.wav", audioDeleteAt = 99_999L)
+        // Two segments far enough apart that padding produces exactly one chunk each: the first
+        // chunk's transcription legitimately returns blank text (not a thrown exception), the
+        // second returns real text -- at least one non-blank segment is produced overall, so this
+        // still finalizes to READY, but the blank chunk must be dropped rather than inserted as an
+        // empty-string segment.
+        val diarization = FakeDiarizationEngine(
+            listOf(
+                SpeakerSegment(startMs = 0, endMs = 3000, speakerIndex = 0),
+                SpeakerSegment(startMs = 4000, endMs = 9000, speakerIndex = 1)
+            )
+        )
+        val asr = FakeAsrEngine(listOf("", "good to see you"))
 
-        TranscriptionWorker.runTranscription(repo, diarization, asr, FakeWavFileReader(5000L), "s1", "/audio/s1.wav")
+        TranscriptionWorker.runTranscription(repo, diarization, asr, FakeWavFileReader(9000L), "s1", "/audio/s1.wav")
 
-        assertTrue(db.transcriptSegmentDao().getForSession("s1").first().isEmpty())
+        val segments = db.transcriptSegmentDao().getForSession("s1").first()
+        assertEquals(1, segments.size)
+        assertEquals("good to see you", segments[0].text)
         assertEquals(SessionStatus.READY, db.sessionDao().getById("s1")?.status)
         db.close()
     }
@@ -126,6 +138,44 @@ class TranscriptionWorkerLogicTest {
         repo.markProcessing("s1", endTime = 5000L, durationMs = 5000L, audioFilePath = "/audio/s1.wav", audioDeleteAt = 99_999L)
         val diarization = FakeDiarizationEngine(listOf(SpeakerSegment(startMs = 0, endMs = 5000, speakerIndex = 0)))
         val asr = FakeAsrEngine(textByCallIndex = listOf(""), throwOnCallIndex = setOf(0))
+
+        try {
+            TranscriptionWorker.runTranscription(repo, diarization, asr, FakeWavFileReader(5000L), "s1", "/audio/s1.wav")
+        } finally {
+            db.close()
+        }
+    }
+
+    @Test(expected = IllegalStateException::class)
+    fun `when every chunk produces only blank text, runTranscription throws instead of finalizing`() = runTest {
+        val db = buildDb()
+        val repo = SessionRepository(db.sessionDao(), db.transcriptSegmentDao()) { }
+        repo.createSession("s1", startTime = 0L)
+        repo.markProcessing("s1", endTime = 5000L, durationMs = 5000L, audioFilePath = "/audio/s1.wav", audioDeleteAt = 99_999L)
+        val diarization = FakeDiarizationEngine(listOf(SpeakerSegment(startMs = 0, endMs = 5000, speakerIndex = 0)))
+        // Whisper "succeeds" (doesn't throw) on every chunk but silently produces no output --
+        // Bug B from the review: successCount alone would have made this look like a success.
+        val asr = FakeAsrEngine(listOf(""))
+
+        try {
+            TranscriptionWorker.runTranscription(repo, diarization, asr, FakeWavFileReader(5000L), "s1", "/audio/s1.wav")
+        } finally {
+            db.close()
+        }
+    }
+
+    @Test(expected = IllegalStateException::class)
+    fun `when diarization finds zero speaker segments, runTranscription throws instead of finalizing with an empty transcript`() = runTest {
+        val db = buildDb()
+        val repo = SessionRepository(db.sessionDao(), db.transcriptSegmentDao()) { }
+        repo.createSession("s1", startTime = 0L)
+        repo.markProcessing("s1", endTime = 5000L, durationMs = 5000L, audioFilePath = "/audio/s1.wav", audioDeleteAt = 99_999L)
+        // Bug A from the review: zero diarization segments means zero chunks, and the old
+        // `chunks.isEmpty() || successCount > 0` check treated that as automatic success -- which
+        // would have wiped out any transcript segments RecordingService already flushed during
+        // recording via replaceSegments(sessionId, emptyList()).
+        val diarization = FakeDiarizationEngine(emptyList())
+        val asr = FakeAsrEngine(emptyList())
 
         try {
             TranscriptionWorker.runTranscription(repo, diarization, asr, FakeWavFileReader(5000L), "s1", "/audio/s1.wav")
