@@ -47,6 +47,23 @@ class RecordingController(
         _state.value = RecordingState.IDLE
     }
 
+    /**
+     * Session-scoped counterpart to [reportRecordingEnded]: a no-op unless [sessionId] still
+     * matches the session this controller currently considers active.
+     *
+     * A recording's teardown (WAV finalize + ASR stop + trailing decode + Room flush) runs on its
+     * own coroutine and can take anywhere from a few hundred milliseconds to over a second. If the
+     * user starts a NEW recording before that coroutine finishes, its eventual call to the
+     * unguarded [reportRecordingEnded] would flip this controller back to IDLE out from under the
+     * new, still-running recording -- desyncing the FAB/persistent bar and kicking the user out of
+     * the live view via RecordingScreen's auto-navigate-back effect. Callers that identify the
+     * specific session they're tearing down (e.g. RecordingService's notification-Stop path)
+     * should use this instead of the unguarded overload.
+     */
+    fun reportRecordingEnded(sessionId: String) {
+        if (activeSessionId == sessionId) reportRecordingEnded()
+    }
+
     private suspend fun start(): RecordingState {
         val id = idGenerator()
         repository.createSession(id, clock())

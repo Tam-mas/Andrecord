@@ -407,7 +407,12 @@ class RecordingService : Service() {
             // land on a dead live view. reportRecordingEnded() is idempotent, so this is also a
             // harmless no-op on the normal FAB-tap path, where RecordingController.stop() has
             // already set itself back to IDLE before this even runs.
-            container.recordingController.reportRecordingEnded()
+            //
+            // Guarded on id, same as the mid-recording-failure path below: everything above this
+            // point (recordingJob?.join()) can suspend, so a new recording may already have been
+            // started on this same service instance by the time we get here. The unguarded
+            // overload would flip that newer, still-running recording's state back to IDLE.
+            container.recordingController.reportRecordingEnded(id)
 
             container.sessionRepository.markProcessing(
                 id, endTime, durationMs,

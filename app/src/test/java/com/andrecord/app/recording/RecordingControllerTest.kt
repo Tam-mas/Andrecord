@@ -117,6 +117,44 @@ class RecordingControllerTest {
         db.close()
     }
 
+    /**
+     * Regression test for the notification-Stop teardown race: the old session's teardown
+     * coroutine (RecordingService.stopRecording()) can still be suspended in
+     * recordingJob?.join() when the user starts a NEW recording on the same service instance. When
+     * that coroutine finally resumes and reports the OLD (now stale) session id ended, the
+     * session-scoped overload must leave the controller alone rather than flipping the newer,
+     * still-running recording back to IDLE.
+     */
+    @Test
+    fun `reportRecordingEnded with a stale session id does not affect a newer recording`() = runTest {
+        val starter = FakeServiceStarter()
+        val (controller, db) = buildController(starter, ids = listOf("old-id"))
+        controller.toggle()
+        assertEquals(RecordingState.RECORDING, controller.currentState())
+        val currentId = starter.startedSessionId!!
+
+        controller.reportRecordingEnded("some-other-stale-id")
+
+        assertEquals(RecordingState.RECORDING, controller.currentState())
+        assertEquals(currentId, starter.startedSessionId)
+        db.close()
+    }
+
+    /** The matching-id case: same effect as the existing unguarded overload's test. */
+    @Test
+    fun `reportRecordingEnded with the current session id returns the controller to idle`() = runTest {
+        val starter = FakeServiceStarter()
+        val (controller, db) = buildController(starter, ids = listOf("current-id"))
+        controller.toggle()
+        assertEquals(RecordingState.RECORDING, controller.currentState())
+        val currentId = starter.startedSessionId!!
+
+        controller.reportRecordingEnded(currentId)
+
+        assertEquals(RecordingState.IDLE, controller.currentState())
+        db.close()
+    }
+
     /** RecordingService.abortStart(): a pre-flight failure, before the capture loop ever runs. */
     @Test
     fun `after a failed start the next toggle starts a fresh session instead of stopping`() = runTest {
