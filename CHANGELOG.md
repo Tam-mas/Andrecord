@@ -1,5 +1,12 @@
 # Changelog
 
+### [2026-07-27 19:40] Changed
+
+**Tech:** `SherpaOnnxStreamingAsrEngine.kt` — `decodingMethod = "modified_beam_search"`, `maxActivePaths = 4`; `RecordingService.kt` — new `resolveAudioSource()` picks `AudioSource.UNPROCESSED` if the device advertises support (`AudioManager.PROPERTY_SUPPORT_AUDIO_SOURCE_UNPROCESSED`), else `AudioSource.VOICE_RECOGNITION`, replacing the previous hardcoded `AudioSource.MIC`  
+**Dev:** Two independent, low-risk accuracy levers for the live streaming transcript: beam search trades a small amount of CPU/latency for better decoding accuracy than greedy search; VOICE_RECOGNITION/UNPROCESSED ask the device's audio HAL to disable or minimize AGC/noise suppression tuned for phone calls, which otherwise fights transcription accuracy for far-field, multi-speaker meeting capture. Verified on-device via a real recording: no crashes, no mic-unavailable aborts, pipeline completed normally.  
+**Plain:** The live transcript during recording should now be somewhat more accurate, from both a better decoding method and a microphone mode better suited to picking up a room full of people talking.  
+**Why:** The user reported the transcript wasn't understanding a bunch of words -- these were two quick, safe wins tackled before the larger offline Whisper refinement work.
+
 ### [2026-07-27 18:10] Added
 
 **Tech:** `mipmap-anydpi-v26/ic_launcher.xml`, `ic_launcher_round.xml`, per-density `ic_launcher_foreground.png`/`ic_launcher.png`/`ic_launcher_round.png`, `values/colors.xml`, `AndroidManifest.xml:android:roundIcon`  
