@@ -67,27 +67,37 @@ class CalendarQualificationTest {
     }
 
     @Test
-    fun `computeStopTimeMillis brings the stop forward to a back-to-back qualifying event`() {
+    fun `computeStopTimeMillis trims the handoff gap off a true zero-gap back-to-back pair`() {
         val watched = setOf(1L)
-        val target = event(1, start = 0, end = 60_000)
-        val backToBack = event(2, start = 61_000, end = 120_000) // starts inside the 5-min grace window
+        val target = event(1, start = 0, end = 1_800_000) // 30-minute meeting
+        val backToBack = event(2, start = 1_800_000, end = 3_600_000) // starts exactly when target ends
 
         val stop = CalendarQualification.computeStopTimeMillis(target, listOf(target, backToBack), watched)
 
-        // The fixture's gap here (1 second) is smaller than HANDOFF_GAP_MILLIS (15s), so
-        // 61_000 - 15_000 = 46_000 falls below target.endTimeMillis and the maxOf floor applies.
-        assertEquals(60_000L, stop)
+        assertEquals(1_800_000L - CalendarQualification.HANDOFF_GAP_MILLIS, stop)
+        assertEquals(CalendarQualification.HANDOFF_GAP_MILLIS, backToBack.startTimeMillis - stop)
     }
 
     @Test
     fun `computeStopTimeMillis leaves a handoff gap before a back-to-back event with room to spare`() {
         val watched = setOf(1L)
-        val target = event(1, start = 0, end = 60_000)
-        val backToBack = event(2, start = 180_000, end = 240_000) // starts 2 minutes after target ends
+        val target = event(1, start = 0, end = 1_800_000) // 30-minute meeting
+        val backToBack = event(2, start = 1_920_000, end = 2_400_000) // starts 2 minutes after target ends
 
         val stop = CalendarQualification.computeStopTimeMillis(target, listOf(target, backToBack), watched)
 
-        assertEquals(180_000L - CalendarQualification.HANDOFF_GAP_MILLIS, stop)
+        assertEquals(1_920_000L - CalendarQualification.HANDOFF_GAP_MILLIS, stop)
+    }
+
+    @Test
+    fun `computeStopTimeMillis never stops before the event's own start, even for a near-immediate back-to-back event`() {
+        val watched = setOf(1L)
+        val target = event(1, start = 0, end = 1_800_000)
+        val almostImmediately = event(2, start = 5_000, end = 100_000) // starts 5s after target itself started
+
+        val stop = CalendarQualification.computeStopTimeMillis(target, listOf(target, almostImmediately), watched)
+
+        assertEquals(0L, stop)
     }
 
     @Test

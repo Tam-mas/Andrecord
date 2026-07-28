@@ -40,11 +40,11 @@ object CalendarQualification {
     /**
      * The default stop time is [event]'s end time plus [GRACE_PERIOD_MILLIS]. If another
      * qualifying event on a watched calendar starts within that grace window, the stop time is
-     * brought forward to [HANDOFF_GAP_MILLIS] before that next event's start time instead (or
-     * [event]'s own end time, whichever is later) -- so a back-to-back meeting gets its own clean
-     * recording rather than one continuous session bleeding across both, with enough of a gap
-     * between the two alarms that the first recording's teardown can complete before the second
-     * one starts.
+     * brought forward to [HANDOFF_GAP_MILLIS] before that next event's start time instead (floored
+     * at [event]'s own start time, not its end time -- see the inline comment below for why) -- so
+     * a back-to-back meeting gets its own clean recording rather than one continuous session
+     * bleeding across both, with enough of a gap between the two alarms that the first recording's
+     * teardown can complete before the second one starts.
      */
     fun computeStopTimeMillis(
         event: CalendarEvent,
@@ -58,7 +58,13 @@ object CalendarQualification {
             .filter { it.startTimeMillis > event.startTimeMillis && it.startTimeMillis < defaultStop }
             .minByOrNull { it.startTimeMillis }
         return if (nextQualifying != null) {
-            maxOf(nextQualifying.startTimeMillis - HANDOFF_GAP_MILLIS, event.endTimeMillis)
+            // Floored at the event's own start (not its end): a true back-to-back pair has zero
+            // gap between A's end and B's start, so honoring both "never stop before A's own end"
+            // and "leave a real gap before B's start" is impossible when the two are this close.
+            // Trimming a few seconds off the tail of a meeting that's already over (or about to
+            // be) is a small, disclosed cost -- losing B's recording entirely, or racing
+            // RecordingService's teardown against B's start, is not.
+            maxOf(nextQualifying.startTimeMillis - HANDOFF_GAP_MILLIS, event.startTimeMillis)
         } else {
             defaultStop
         }
