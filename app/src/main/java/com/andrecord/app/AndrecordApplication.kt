@@ -8,6 +8,9 @@ import androidx.work.WorkManager
 import com.andrecord.app.accessibility.AccessibilityServiceStatus
 import com.andrecord.app.asr.SherpaOnnxStreamingAsrEngine
 import com.andrecord.app.asr.StreamingAsrEngine
+import com.andrecord.app.calendar.AndroidCalendarEventRepository
+import com.andrecord.app.calendar.CalendarAutoRecordScheduler
+import com.andrecord.app.calendar.CalendarEventRepository
 import com.andrecord.app.data.AndrecordDatabase
 import com.andrecord.app.data.SessionRepository
 import com.andrecord.app.diarization.DiarizationEngine
@@ -36,6 +39,8 @@ class AppContainer(app: Application) {
     val accessibilityServiceStatus = AccessibilityServiceStatus(app)
     val liveTranscriptState = LiveTranscriptState()
     val appSettings = AppSettings(app)
+    val calendarEventRepository: CalendarEventRepository = AndroidCalendarEventRepository(app)
+    val calendarAutoRecordScheduler = CalendarAutoRecordScheduler(app, calendarEventRepository, appSettings)
 
     lateinit var streamingAsrEngine: StreamingAsrEngine
     lateinit var diarizationEngine: DiarizationEngine
