@@ -1,5 +1,12 @@
 # Changelog
 
+### [2026-07-28 17:15] Added
+
+**Tech:** `RecordingServiceStarter.startRecording(sessionId, calendarName)` — new `calendarName: String?` parameter, threaded through `RecordingService`'s `ACTION_START` intent (`EXTRA_CALENDAR_NAME`) into the notification text (`"Recording… (Work)"`); `RecordingController` — new `startForCalendarEvent(calendarName): String?` (starts only if idle, returns the new session id or `null` if a recording was already active) and `stopIfActive(sessionId): Boolean` (session-scoped stop, no-op on a stale/mismatched id)
+**Dev:** Task 3 of the calendar auto-record plan. Builds on Task 2's `SessionRepository.createSession(id, startTime, calendarName)`, which already appends `" — <calendarName>"` to the session title. `startForCalendarEvent` deliberately never interrupts an active recording (unlike `toggle()`), and `stopIfActive` deliberately only stops the specific session it's given, so a calendar-triggered stop alarm firing late can never cut off a different (manual, or later-event) recording that happens to be active by then. Neither method is wired to anything yet — `CalendarAlarmReceiver` (Task 7) will call both once it exists. Existing single-arg `startRecording` call sites/fakes in `RecordingServiceInstrumentedTest`, `SessionListViewModelTest`, and `RecordingViewModelTest` updated to the new signature to keep the module compiling; no behavior change in those files.
+**Plain:** Added the internal plumbing so a calendar event can later start a recording automatically and tag its notification with the meeting's name, and so a matching alarm can stop only that specific recording. Nothing user-visible yet — no calendar trigger calls this code until a later step.
+**Why:** Laying the groundwork for auto-recording meetings straight from the calendar, one reviewable step at a time, before wiring up the actual alarm/receiver that will call this.
+
 ### [2026-07-27 20:45] Fixed
 
 **Tech:** `AndrecordApplication.kt` — removed `whisperAsrEngine` from `AppContainer`; `TranscriptionWorker.kt` — constructs `SherpaOnnxWhisperAsrEngine(applicationContext)` as a local instance inside `doWork()` instead, released in the same `finally`; `enqueue()` switched from a plain `WorkManager.enqueue()` to `enqueueUniqueWork(UNIQUE_WORK_NAME, ExistingWorkPolicy.APPEND_OR_REPLACE, request)`  
