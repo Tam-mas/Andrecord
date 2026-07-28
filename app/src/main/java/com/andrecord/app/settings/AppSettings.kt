@@ -33,11 +33,19 @@ class AppSettings(private val context: Context) {
         prefs.edit().putStringSet(KEY_WATCHED_CALENDAR_IDS, ids.map { it.toString() }.toSet()).apply()
     }
 
+    fun hasRequestedCalendarPermission(): Boolean =
+        prefs.getBoolean(KEY_HAS_REQUESTED_CALENDAR_PERMISSION, false)
+
+    fun markCalendarPermissionRequested() {
+        prefs.edit().putBoolean(KEY_HAS_REQUESTED_CALENDAR_PERMISSION, true).apply()
+    }
+
     companion object {
         private const val PREFS_NAME = "app_settings"
         private const val KEY_REOPEN_BEHAVIOR = "reopen_behavior"
         private const val KEY_CALENDAR_AUTO_RECORD_ENABLED = "calendar_auto_record_enabled"
         private const val KEY_WATCHED_CALENDAR_IDS = "watched_calendar_ids"
+        private const val KEY_HAS_REQUESTED_CALENDAR_PERMISSION = "has_requested_calendar_permission"
 
         /** Pure parsing logic, extracted so it's unit-testable without a real Context. */
         fun parseReopenBehavior(raw: String?): ReopenBehavior =

@@ -41,7 +41,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -73,9 +72,9 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
     val availableCalendars by viewModel.availableCalendars.collectAsState()
     val watchedCalendarIds by viewModel.watchedCalendarIds.collectAsState()
     val showExactAlarmBanner by viewModel.showExactAlarmBanner.collectAsState()
+    val hasRequestedCalendarPermission by viewModel.hasRequestedCalendarPermission.collectAsState()
     val context = LocalContext.current
     var calendarPermissionGranted by remember { mutableStateOf(isCalendarPermissionGranted(context)) }
-    var hasRequestedCalendarPermission by rememberSaveable { mutableStateOf(false) }
 
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -94,7 +93,7 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         calendarPermissionGranted = granted
-        hasRequestedCalendarPermission = true
+        viewModel.markCalendarPermissionRequested()
         if (granted) viewModel.setCalendarAutoRecordEnabled(true)
     }
 

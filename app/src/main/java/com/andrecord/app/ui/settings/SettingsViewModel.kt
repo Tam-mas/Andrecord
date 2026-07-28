@@ -31,6 +31,9 @@ class SettingsViewModel(
     private val _watchedCalendarIds = MutableStateFlow(appSettings.getWatchedCalendarIds())
     val watchedCalendarIds: StateFlow<Set<Long>> = _watchedCalendarIds
 
+    private val _hasRequestedCalendarPermission = MutableStateFlow(appSettings.hasRequestedCalendarPermission())
+    val hasRequestedCalendarPermission: StateFlow<Boolean> = _hasRequestedCalendarPermission
+
     private val _showExactAlarmBanner = MutableStateFlow(false)
     val showExactAlarmBanner: StateFlow<Boolean> = _showExactAlarmBanner
 
@@ -66,6 +69,15 @@ class SettingsViewModel(
         appSettings.setCalendarAutoRecordEnabled(enabled)
         _calendarAutoRecordEnabled.value = enabled
         refreshCalendarState()
+    }
+
+    /** Called once the READ_CALENDAR runtime permission dialog has been shown at least once, so
+     *  SettingsScreen can tell "never asked" apart from "asked and denied" across app restarts --
+     *  Compose state alone (even rememberSaveable) doesn't survive a cold relaunch, and this flag
+     *  is what decides whether to offer a re-request button or a deep link to system Settings. */
+    fun markCalendarPermissionRequested() {
+        appSettings.markCalendarPermissionRequested()
+        _hasRequestedCalendarPermission.value = true
     }
 
     fun toggleWatchedCalendar(calendarId: Long) {
