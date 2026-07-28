@@ -83,7 +83,14 @@ fun AndrecordApp(container: AppContainer) {
             )
         }
         TopLevelDestination.SETTINGS -> {
-            val settingsViewModel = remember { SettingsViewModel(container.appSettings) }
+            val settingsViewModel = remember {
+                SettingsViewModel(
+                    container.appSettings,
+                    container.calendarEventRepository,
+                    container.exactAlarmPermissionStatus,
+                    container.calendarAutoRecordScheduler
+                )
+            }
             SettingsScreen(
                 viewModel = settingsViewModel,
                 onBack = { destination = TopLevelDestination.LIST_DETAIL }

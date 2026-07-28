@@ -16,6 +16,7 @@ import com.andrecord.app.calendar.AndroidCalendarEventRepository
 import com.andrecord.app.calendar.CalendarAutoRecordScheduler
 import com.andrecord.app.calendar.CalendarEventRepository
 import com.andrecord.app.calendar.CalendarRescanWorker
+import com.andrecord.app.calendar.ExactAlarmPermissionStatus
 import com.andrecord.app.data.AndrecordDatabase
 import com.andrecord.app.data.SessionRepository
 import com.andrecord.app.diarization.DiarizationEngine
@@ -46,6 +47,7 @@ class AppContainer(app: Application) {
     val appSettings = AppSettings(app)
     val calendarEventRepository: CalendarEventRepository = AndroidCalendarEventRepository(app)
     val calendarAutoRecordScheduler = CalendarAutoRecordScheduler(app, calendarEventRepository, appSettings)
+    val exactAlarmPermissionStatus = ExactAlarmPermissionStatus(app)
 
     lateinit var streamingAsrEngine: StreamingAsrEngine
     lateinit var diarizationEngine: DiarizationEngine
