@@ -10,6 +10,7 @@
          long meeting isn't killed at WorkManager's ~10 minute execution ceiling. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
     <!-- Deliberately no INTERNET permission: this app is fully on-device. -->
 
     <application
