@@ -19,7 +19,7 @@ class RecordingServiceInstrumentedTest {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         val starter = AndroidRecordingServiceStarter(context)
 
-        starter.startRecording("smoke-test-session")
+        starter.startRecording("smoke-test-session", null)
         Thread.sleep(3000)
         starter.stopRecording()
         Thread.sleep(1000)

@@ -1,15 +1,16 @@
 package com.andrecord.app.recording
 
 interface RecordingServiceStarter {
-    fun startRecording(sessionId: String)
+    fun startRecording(sessionId: String, calendarName: String?)
     fun stopRecording()
 }
 
 class AndroidRecordingServiceStarter(private val context: android.content.Context) : RecordingServiceStarter {
-    override fun startRecording(sessionId: String) {
+    override fun startRecording(sessionId: String, calendarName: String?) {
         val intent = android.content.Intent(context, RecordingService::class.java)
             .setAction(RecordingService.ACTION_START)
             .putExtra(RecordingService.EXTRA_SESSION_ID, sessionId)
+            .putExtra(RecordingService.EXTRA_CALENDAR_NAME, calendarName)
         context.startForegroundService(intent)
     }
 

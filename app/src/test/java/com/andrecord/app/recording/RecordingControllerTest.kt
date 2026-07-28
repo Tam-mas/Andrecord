@@ -16,8 +16,12 @@ class RecordingControllerTest {
 
     private class FakeServiceStarter : RecordingServiceStarter {
         var startedSessionId: String? = null
+        var startedCalendarName: String? = null
         var stopCalled = false
-        override fun startRecording(sessionId: String) { startedSessionId = sessionId }
+        override fun startRecording(sessionId: String, calendarName: String?) {
+            startedSessionId = sessionId
+            startedCalendarName = calendarName
+        }
         override fun stopRecording() { stopCalled = true }
     }
 
@@ -196,6 +200,65 @@ class RecordingControllerTest {
         assertEquals(false, starter.stopCalled)
         assertEquals("next-id", starter.startedSessionId)
         assertEquals(SessionStatus.RECORDING, db.sessionDao().getById("next-id")?.status)
+        db.close()
+    }
+
+    @Test
+    fun `startForCalendarEvent starts a session with the calendar name`() = runTest {
+        val starter = FakeServiceStarter()
+        val (controller, db) = buildController(starter)
+
+        val sessionId = controller.startForCalendarEvent("Work")
+
+        assertEquals("fixed-id", sessionId)
+        assertEquals(RecordingState.RECORDING, controller.currentState())
+        assertEquals("Work", starter.startedCalendarName)
+        val title = db.sessionDao().getById("fixed-id")?.title
+        assertEquals(true, title!!.endsWith("— Work"))
+        db.close()
+    }
+
+    @Test
+    fun `startForCalendarEvent returns null and does not interrupt an already-active recording`() = runTest {
+        val starter = FakeServiceStarter()
+        val (controller, db) = buildController(starter, ids = listOf("manual-id"))
+        controller.toggle()
+        assertEquals(RecordingState.RECORDING, controller.currentState())
+
+        val sessionId = controller.startForCalendarEvent("Work")
+
+        assertEquals(null, sessionId)
+        assertEquals(RecordingState.RECORDING, controller.currentState())
+        assertEquals(false, starter.stopCalled)
+        assertEquals("manual-id", starter.startedSessionId)
+        db.close()
+    }
+
+    @Test
+    fun `stopIfActive stops the matching session`() = runTest {
+        val starter = FakeServiceStarter()
+        val (controller, db) = buildController(starter, ids = listOf("cal-id"))
+        val sessionId = controller.startForCalendarEvent("Work")!!
+
+        val stopped = controller.stopIfActive(sessionId)
+
+        assertEquals(true, stopped)
+        assertEquals(RecordingState.IDLE, controller.currentState())
+        assertEquals(true, starter.stopCalled)
+        db.close()
+    }
+
+    @Test
+    fun `stopIfActive is a no-op for a stale session id`() = runTest {
+        val starter = FakeServiceStarter()
+        val (controller, db) = buildController(starter, ids = listOf("cal-id"))
+        controller.startForCalendarEvent("Work")
+
+        val stopped = controller.stopIfActive("some-other-id")
+
+        assertEquals(false, stopped)
+        assertEquals(RecordingState.RECORDING, controller.currentState())
+        assertEquals(false, starter.stopCalled)
         db.close()
     }
 }

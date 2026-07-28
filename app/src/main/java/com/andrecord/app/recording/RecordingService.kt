@@ -83,13 +83,16 @@ class RecordingService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_START -> startRecording(intent.getStringExtra(EXTRA_SESSION_ID)!!)
+            ACTION_START -> startRecording(
+                intent.getStringExtra(EXTRA_SESSION_ID)!!,
+                intent.getStringExtra(EXTRA_CALENDAR_NAME)
+            )
             ACTION_STOP -> stopRecording()
         }
         return START_NOT_STICKY
     }
 
-    private fun startRecording(id: String) {
+    private fun startRecording(id: String, calendarName: String?) {
         sessionId = id
         startTime = System.currentTimeMillis()
         stopRequested = false
@@ -134,7 +137,9 @@ class RecordingService : Service() {
             return
         }
 
-        val notification = buildNotification("Recording…")
+        val notification = buildNotification(
+            if (calendarName != null) "Recording… ($calendarName)" else "Recording…"
+        )
         ServiceCompat.startForeground(
             this, NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
         )
@@ -488,6 +493,7 @@ class RecordingService : Service() {
         const val ACTION_START = "com.andrecord.app.action.START"
         const val ACTION_STOP = "com.andrecord.app.action.STOP"
         const val EXTRA_SESSION_ID = "session_id"
+        const val EXTRA_CALENDAR_NAME = "calendar_name"
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_ID = "recording"
         private const val SAMPLE_RATE = 16000

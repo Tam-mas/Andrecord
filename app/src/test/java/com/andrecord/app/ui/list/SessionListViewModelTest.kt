@@ -27,7 +27,7 @@ import org.robolectric.RobolectricTestRunner
 class SessionListViewModelTest {
 
     private class NoOpServiceStarter : RecordingServiceStarter {
-        override fun startRecording(sessionId: String) {}
+        override fun startRecording(sessionId: String, calendarName: String?) {}
         override fun stopRecording() {}
     }
 

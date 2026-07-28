@@ -38,7 +38,7 @@ class RecordingViewModelTest {
     private class FakeServiceStarter : RecordingServiceStarter {
         var startCount = 0
         var stopCount = 0
-        override fun startRecording(sessionId: String) { startCount++ }
+        override fun startRecording(sessionId: String, calendarName: String?) { startCount++ }
         override fun stopRecording() { stopCount++ }
     }
 

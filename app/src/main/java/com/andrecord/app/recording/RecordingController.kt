@@ -17,8 +17,9 @@ class RecordingController(
      * Single source of truth for "is a recording currently active", observed directly by
      * SessionListViewModel (persistent bar + FAB) and RecordingViewModel (live view) so every
      * path that starts/stops a recording -- this class's own toggle(), a volume-key/Quick-Tap
-     * trigger, the recording notification's Stop action, or a mid-recording failure -- is
-     * reflected everywhere at once instead of leaving other observers on a stale local copy.
+     * trigger, a calendar-triggered auto-record, the recording notification's Stop action, or a
+     * mid-recording failure -- is reflected everywhere at once instead of leaving other observers
+     * on a stale local copy.
      */
     val state: StateFlow<RecordingState> = _state
 
@@ -32,6 +33,32 @@ class RecordingController(
 
     suspend fun toggle(): RecordingState {
         return if (_state.value == RecordingState.IDLE) start() else stop()
+    }
+
+    /**
+     * Calendar-triggered start (see CalendarAlarmReceiver): only starts if currently idle --
+     * unlike [toggle], it never stops an active recording. Returns the new session's id so the
+     * caller can tag a later stop alarm to it, or `null` if a recording was already active, which
+     * the caller treats as a quiet no-op rather than interrupting whatever is already running.
+     */
+    suspend fun startForCalendarEvent(calendarName: String): String? {
+        if (_state.value != RecordingState.IDLE) return null
+        start(calendarName)
+        return activeSessionId
+    }
+
+    /**
+     * Session-scoped stop, mirroring [reportRecordingEnded]'s session-scoped overload but
+     * actually stopping the recording rather than just resetting state: a no-op unless
+     * [sessionId] still matches the session this controller currently considers active. Used by
+     * CalendarAlarmReceiver's stop alarm, which must never stop a different recording (a manual
+     * one, or a later calendar event's) that happens to be active when it fires. Returns whether
+     * it actually stopped anything.
+     */
+    suspend fun stopIfActive(sessionId: String): Boolean {
+        if (activeSessionId != sessionId) return false
+        stop()
+        return true
     }
 
     /**
@@ -68,15 +95,15 @@ class RecordingController(
         if (activeSessionId == sessionId) reportRecordingEnded()
     }
 
-    private suspend fun start(): RecordingState {
+    private suspend fun start(calendarName: String? = null): RecordingState {
         val id = idGenerator()
-        repository.createSession(id, clock())
+        repository.createSession(id, clock(), calendarName)
         activeSessionId = id
         // Set before handing off to the service: the service can report a start failure back to
         // us (see reportRecordingEnded) as soon as it processes the start intent, and that reset
         // must not be clobbered by a late assignment here.
         _state.value = RecordingState.RECORDING
-        serviceStarter.startRecording(id)
+        serviceStarter.startRecording(id, calendarName)
         return _state.value
     }
 
