@@ -24,7 +24,7 @@ class CalendarAlarmReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         val pendingResult = goAsync()
-        CoroutineScope(Dispatchers.Default + SupervisorJob()).launch {
+        CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
             try {
                 when (intent.action) {
                     ACTION_START -> handleStart(context, intent)
