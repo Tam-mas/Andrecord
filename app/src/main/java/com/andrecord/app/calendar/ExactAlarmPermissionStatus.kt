@@ -28,9 +28,20 @@ class ExactAlarmPermissionStatus(private val context: Context) {
         prefs.edit().putBoolean(KEY_DISMISSED, true).apply()
     }
 
-    /** Never shown once the permission is actually granted (dismissal is then moot), and never
-     * shown again once the user has dismissed it while still ungranted. */
-    fun shouldShowBanner(): Boolean = !isGranted() && !isDismissed()
+    /**
+     * Never shown once the permission is actually granted, and never shown again once the user
+     * has dismissed it while still ungranted -- with one exception: dismissal is cleared the
+     * moment the permission is (re-)granted, so a *later* revocation (the permission is revocable
+     * at any time via system Settings) always re-shows the banner rather than staying silently
+     * dismissed from a grant that no longer holds.
+     */
+    fun shouldShowBanner(): Boolean {
+        if (isGranted()) {
+            if (isDismissed()) prefs.edit().putBoolean(KEY_DISMISSED, false).apply()
+            return false
+        }
+        return !isDismissed()
+    }
 
     companion object {
         private const val PREFS_NAME = "exact_alarm_permission_status"

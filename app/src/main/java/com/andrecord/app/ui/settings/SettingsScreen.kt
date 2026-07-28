@@ -1,6 +1,7 @@
 package com.andrecord.app.ui.settings
 
 import android.Manifest
+import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -40,6 +41,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -47,6 +49,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.shape.RoundedCornerShape as RoundedCorner
+import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -72,6 +75,7 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
     val showExactAlarmBanner by viewModel.showExactAlarmBanner.collectAsState()
     val context = LocalContext.current
     var calendarPermissionGranted by remember { mutableStateOf(isCalendarPermissionGranted(context)) }
+    var hasRequestedCalendarPermission by rememberSaveable { mutableStateOf(false) }
 
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -90,6 +94,7 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         calendarPermissionGranted = granted
+        hasRequestedCalendarPermission = true
         if (granted) viewModel.setCalendarAutoRecordEnabled(true)
     }
 
@@ -159,8 +164,21 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
                 // SCHEDULE_EXACT_ALARM below -- surfaced the same way rather than silently
                 // finding zero events forever (design spec §8).
                 if (!calendarPermissionGranted) {
+                    val activity = context as? Activity
+                    val canShowRationale = activity != null &&
+                        ActivityCompat.shouldShowRequestPermissionRationale(activity, Manifest.permission.READ_CALENDAR)
+                    val permanentlyDenied = hasRequestedCalendarPermission && !canShowRationale
                     CalendarPermissionBanner(
-                        onGrant = { requestCalendarPermission.launch(Manifest.permission.READ_CALENDAR) }
+                        permanentlyDenied = permanentlyDenied,
+                        onGrant = { requestCalendarPermission.launch(Manifest.permission.READ_CALENDAR) },
+                        onOpenAppSettings = {
+                            context.startActivity(
+                                Intent(
+                                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                    Uri.parse("package:${context.packageName}")
+                                )
+                            )
+                        }
                     )
                 }
                 if (showExactAlarmBanner) {
@@ -207,7 +225,7 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
 }
 
 @Composable
-private fun CalendarPermissionBanner(onGrant: () -> Unit) {
+private fun CalendarPermissionBanner(permanentlyDenied: Boolean, onGrant: () -> Unit, onOpenAppSettings: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -216,13 +234,21 @@ private fun CalendarPermissionBanner(onGrant: () -> Unit) {
             .padding(16.dp)
     ) {
         Text(
-            text = "Calendar permission is needed for auto-record to see your meetings.",
+            text = if (permanentlyDenied) {
+                "Calendar permission was denied. Enable it in system Settings for auto-record to see your meetings."
+            } else {
+                "Calendar permission is needed for auto-record to see your meetings."
+            },
             style = AndrecordTypography.bodyMedium,
             color = AndrecordColors.Paper50
         )
         Spacer(modifier = Modifier.height(4.dp))
-        TextButton(onClick = onGrant) {
-            Text(text = "Grant Calendar Permission", style = AndrecordTypography.labelSmall, color = AndrecordColors.Brass500)
+        TextButton(onClick = if (permanentlyDenied) onOpenAppSettings else onGrant) {
+            Text(
+                text = if (permanentlyDenied) "Open App Settings" else "Grant Calendar Permission",
+                style = AndrecordTypography.labelSmall,
+                color = AndrecordColors.Brass500
+            )
         }
     }
 }
