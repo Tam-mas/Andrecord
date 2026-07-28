@@ -74,7 +74,20 @@ class CalendarQualificationTest {
 
         val stop = CalendarQualification.computeStopTimeMillis(target, listOf(target, backToBack), watched)
 
-        assertEquals(61_000L, stop)
+        // The fixture's gap here (1 second) is smaller than HANDOFF_GAP_MILLIS (15s), so
+        // 61_000 - 15_000 = 46_000 falls below target.endTimeMillis and the maxOf floor applies.
+        assertEquals(60_000L, stop)
+    }
+
+    @Test
+    fun `computeStopTimeMillis leaves a handoff gap before a back-to-back event with room to spare`() {
+        val watched = setOf(1L)
+        val target = event(1, start = 0, end = 60_000)
+        val backToBack = event(2, start = 180_000, end = 240_000) // starts 2 minutes after target ends
+
+        val stop = CalendarQualification.computeStopTimeMillis(target, listOf(target, backToBack), watched)
+
+        assertEquals(180_000L - CalendarQualification.HANDOFF_GAP_MILLIS, stop)
     }
 
     @Test

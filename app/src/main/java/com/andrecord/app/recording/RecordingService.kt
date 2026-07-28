@@ -438,8 +438,17 @@ class RecordingService : Service() {
                 audioDeleteAt = endTime + TimeUnit.DAYS.toMillis(7)
             )
             TranscriptionWorker.enqueue(applicationContext, id, file.absolutePath, durationMs, startTime)
-            ServiceCompat.stopForeground(this@RecordingService, Service.STOP_FOREGROUND_REMOVE)
-            stopSelf()
+
+            // Guarded on id, same reasoning as reportRecordingEnded(id) a few lines up: everything
+            // above this point (recordingJob?.join()) can suspend, so a new recording -- e.g. a
+            // calendar-triggered one starting back-to-back with this one -- may already have been
+            // started on this same service instance by the time we get here. An unguarded
+            // stopForeground/stopSelf would tear down the newer recording's foreground state and
+            // destroy the service out from under it.
+            if (sessionId == id) {
+                ServiceCompat.stopForeground(this@RecordingService, Service.STOP_FOREGROUND_REMOVE)
+                stopSelf()
+            }
         }
     }
 
