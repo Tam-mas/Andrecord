@@ -150,6 +150,64 @@ class TranscriptionWorkerLogicTest {
         }
     }
 
+    @Test
+    fun `progress is reported per chunk and left at 100 percent when the final check throws before finalizing`() = runTest {
+        val db = buildDb()
+        val repo = SessionRepository(db.sessionDao(), db.transcriptSegmentDao()) { }
+        repo.createSession("s1", startTime = 0L)
+        repo.markProcessing("s1", endTime = 9000L, durationMs = 9000L, audioFilePath = "/audio/s1.wav", audioDeleteAt = 99_999L)
+        // Two segments far enough apart to produce exactly one chunk each -- both fail, so
+        // runTranscription throws after the loop (and after both progress updates) completes,
+        // leaving finalizeReady's progress-clearing never reached.
+        val diarization = FakeDiarizationEngine(
+            listOf(
+                SpeakerSegment(startMs = 0, endMs = 3000, speakerIndex = 0),
+                SpeakerSegment(startMs = 4000, endMs = 9000, speakerIndex = 1)
+            )
+        )
+        val asr = FakeAsrEngine(textByCallIndex = listOf("", ""), throwOnCallIndex = setOf(0, 1))
+
+        try {
+            TranscriptionWorker.runTranscription(repo, diarization, asr, FakeWavFileReader(9000L), "s1", "/audio/s1.wav")
+        } catch (e: IllegalStateException) {
+            // Expected -- see the sibling "every chunk fails" test.
+        }
+
+        val session = db.sessionDao().getById("s1")
+        assertEquals(100, session?.processingProgressPercent)
+        assertEquals(0L, session?.processingEtaMillis)
+        db.close()
+    }
+
+    @Test
+    fun `computeProgressPercent divides chunks done by total chunks`() {
+        assertEquals(0, TranscriptionWorker.computeProgressPercent(0, 4))
+        assertEquals(25, TranscriptionWorker.computeProgressPercent(1, 4))
+        assertEquals(50, TranscriptionWorker.computeProgressPercent(2, 4))
+        assertEquals(100, TranscriptionWorker.computeProgressPercent(4, 4))
+    }
+
+    @Test
+    fun `computeProgressPercent treats zero total chunks as fully complete`() {
+        assertEquals(100, TranscriptionWorker.computeProgressPercent(0, 0))
+    }
+
+    @Test
+    fun `estimateRemainingMillis is null before the first chunk finishes`() {
+        assertEquals(null, TranscriptionWorker.estimateRemainingMillis(elapsedMillis = 5000L, chunksDone = 0, totalChunks = 4))
+    }
+
+    @Test
+    fun `estimateRemainingMillis extrapolates from the average time per chunk so far`() {
+        // 2 of 4 chunks done in 4000ms -- 2000ms/chunk average, 2 chunks remaining.
+        assertEquals(4000L, TranscriptionWorker.estimateRemainingMillis(elapsedMillis = 4000L, chunksDone = 2, totalChunks = 4))
+    }
+
+    @Test
+    fun `estimateRemainingMillis is zero once every chunk is done`() {
+        assertEquals(0L, TranscriptionWorker.estimateRemainingMillis(elapsedMillis = 8000L, chunksDone = 4, totalChunks = 4))
+    }
+
     @Test(expected = IllegalStateException::class)
     fun `when every chunk produces only blank text, runTranscription throws instead of finalizing`() = runTest {
         val db = buildDb()

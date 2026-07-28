@@ -175,6 +175,8 @@ class TranscriptionWorker(context: Context, params: WorkerParameters) : Coroutin
             val wave = wavFileReader.read(wavFilePath)
             val totalDurationMs = (wave.samples.size.toLong() * 1000L) / wave.sampleRate
             val chunks = WhisperChunker.chunk(totalDurationMs, speakerSegments)
+            val totalChunks = chunks.size
+            val progressStartTime = System.currentTimeMillis()
 
             val transcriptSegments = mutableListOf<TranscriptSegment>()
             // Counts only chunks that produced real, non-blank Whisper output -- NOT
@@ -185,7 +187,7 @@ class TranscriptionWorker(context: Context, params: WorkerParameters) : Coroutin
             // silently finalize an all-placeholder transcript as READY, exactly the kind of
             // silent failure this check exists to prevent.
             var realSegmentCount = 0
-            for (chunk in chunks) {
+            for ((chunkIndex, chunk) in chunks.withIndex()) {
                 val chunkSamples = sliceSamples(wave.samples, wave.sampleRate, chunk.startMs, chunk.endMs)
                 val transcribed = try {
                     asrEngine.transcribe(chunkSamples, wave.sampleRate)
@@ -212,6 +214,16 @@ class TranscriptionWorker(context: Context, params: WorkerParameters) : Coroutin
                         )
                     )
                 }
+
+                // Rough, live progress for the session list/detail screens -- by chunk count, not
+                // audio duration, since chunks vary in length; the ETA is a simple linear
+                // extrapolation from the average time per chunk so far, not a calibrated model.
+                val chunksDone = chunkIndex + 1
+                repository.updateProcessingProgress(
+                    sessionId,
+                    computeProgressPercent(chunksDone, totalChunks),
+                    estimateRemainingMillis(System.currentTimeMillis() - progressStartTime, chunksDone, totalChunks)
+                )
             }
 
             check(realSegmentCount > 0) {
@@ -227,6 +239,24 @@ class TranscriptionWorker(context: Context, params: WorkerParameters) : Coroutin
             val startIdx = ((startMs * sampleRate) / 1000L).toInt().coerceIn(0, samples.size)
             val endIdx = ((endMs * sampleRate) / 1000L).toInt().coerceIn(startIdx, samples.size)
             return samples.copyOfRange(startIdx, endIdx)
+        }
+
+        /** Percent complete by chunk count, not audio duration -- chunks vary in length, but
+         *  counting them is simple and good enough for a rough estimate. */
+        fun computeProgressPercent(chunksDone: Int, totalChunks: Int): Int {
+            if (totalChunks <= 0) return 100
+            return ((chunksDone * 100) / totalChunks).coerceIn(0, 100)
+        }
+
+        /** Extrapolates remaining time from the average time per chunk so far -- a simple linear
+         *  estimate, not a calibrated model. `null` before the first chunk finishes, since there's
+         *  no "so far" to average yet. */
+        fun estimateRemainingMillis(elapsedMillis: Long, chunksDone: Int, totalChunks: Int): Long? {
+            if (chunksDone <= 0) return null
+            val chunksRemaining = totalChunks - chunksDone
+            if (chunksRemaining <= 0) return 0L
+            val avgMillisPerChunk = elapsedMillis.toDouble() / chunksDone
+            return (avgMillisPerChunk * chunksRemaining).toLong()
         }
 
         /** Stable name for [enqueue]'s unique-work chain -- see [enqueue] for why this work is

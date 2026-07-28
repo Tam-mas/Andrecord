@@ -256,5 +256,66 @@ class SessionRepositoryTest {
         db.close()
     }
 
+    @Test
+    fun `updateProcessingProgress sets progress and eta`() = runTest {
+        val (repo, db) = buildRepo()
+        repo.createSession("s1", startTime = 1000L)
+        repo.markProcessing("s1", endTime = 5000L, durationMs = 4000L, audioFilePath = "/audio/s1.wav", audioDeleteAt = 999_999L)
+
+        repo.updateProcessingProgress("s1", progressPercent = 42, etaMillis = 12_000L)
+
+        val session = db.sessionDao().getById("s1")
+        assertEquals(42, session?.processingProgressPercent)
+        assertEquals(12_000L, session?.processingEtaMillis)
+        db.close()
+    }
+
+    @Test
+    fun `finalizeReady clears processing progress`() = runTest {
+        val (repo, db) = buildRepo()
+        repo.createSession("s1", startTime = 1000L)
+        repo.markProcessing("s1", endTime = 5000L, durationMs = 4000L, audioFilePath = "/audio/s1.wav", audioDeleteAt = 999_999L)
+        repo.updateProcessingProgress("s1", progressPercent = 80, etaMillis = 2000L)
+
+        repo.finalizeReady("s1", speakerCount = 2)
+
+        val session = db.sessionDao().getById("s1")
+        assertNull(session?.processingProgressPercent)
+        assertNull(session?.processingEtaMillis)
+        db.close()
+    }
+
+    @Test
+    fun `markProcessingFailed clears processing progress`() = runTest {
+        val (repo, db) = buildRepo()
+        repo.createSession("s1", startTime = 1000L)
+        repo.markProcessing("s1", endTime = 5000L, durationMs = 4000L, audioFilePath = "/audio/s1.wav", audioDeleteAt = 999_999L)
+        repo.updateProcessingProgress("s1", progressPercent = 60, etaMillis = 3000L)
+
+        repo.markProcessingFailed("s1")
+
+        val session = db.sessionDao().getById("s1")
+        assertNull(session?.processingProgressPercent)
+        assertNull(session?.processingEtaMillis)
+        db.close()
+    }
+
+    @Test
+    fun `retryProcessing clears stale progress from a previous failed attempt`() = runTest {
+        val (repo, db) = buildRepo()
+        repo.createSession("s1", startTime = 1000L)
+        repo.markProcessing("s1", endTime = 5000L, durationMs = 4000L, audioFilePath = "/audio/s1.wav", audioDeleteAt = 999_999L)
+        repo.updateProcessingProgress("s1", progressPercent = 90, etaMillis = 500L)
+        repo.markProcessingFailed("s1")
+
+        repo.retryProcessing("s1")
+
+        val session = db.sessionDao().getById("s1")
+        assertEquals(SessionStatus.PROCESSING, session?.status)
+        assertNull(session?.processingProgressPercent)
+        assertNull(session?.processingEtaMillis)
+        db.close()
+    }
+
     private data class Quadruple(val sessionId: String, val wavFilePath: String, val durationMs: Long, val startTime: Long)
 }

@@ -48,9 +48,11 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.andrecord.app.data.Session
+import com.andrecord.app.data.SessionStatus
 import com.andrecord.app.data.TranscriptSegment
 import com.andrecord.app.recording.RecordingState
 import com.andrecord.app.ui.components.SpeakerTimelineStrip
+import com.andrecord.app.ui.components.formatProcessingStatus
 import com.andrecord.app.ui.recording.formatElapsed
 import com.andrecord.app.ui.theme.AndrecordColors
 import com.andrecord.app.ui.theme.AndrecordTypography
@@ -217,6 +219,12 @@ private fun RecordingBar(startTime: Long?, onClick: () -> Unit) {
 private fun SessionRow(session: Session, segments: List<TranscriptSegment>, onClick: () -> Unit) {
     Column(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)) {
         Text(text = session.title, style = MaterialTheme.typography.titleMedium)
+        if (session.status == SessionStatus.PROCESSING) {
+            Text(
+                text = formatProcessingStatus(session.processingProgressPercent, session.processingEtaMillis),
+                style = MaterialTheme.typography.labelSmall
+            )
+        }
         session.speakerCount?.let {
             Text(text = "$it speaker${if (it == 1) "" else "s"}", style = MaterialTheme.typography.labelSmall)
         }

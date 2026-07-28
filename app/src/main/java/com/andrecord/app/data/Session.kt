@@ -15,5 +15,7 @@ data class Session(
     val status: SessionStatus,
     val speakerCount: Int?,
     val audioFilePath: String?,
-    val audioDeleteAt: Long?
+    val audioDeleteAt: Long?,
+    val processingProgressPercent: Int? = null,
+    val processingEtaMillis: Long? = null
 )

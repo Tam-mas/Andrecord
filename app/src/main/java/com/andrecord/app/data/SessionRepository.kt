@@ -97,14 +97,36 @@ class SessionRepository(
                 durationMs = durationMs,
                 status = SessionStatus.PROCESSING,
                 audioFilePath = audioFilePath,
-                audioDeleteAt = audioDeleteAt
+                audioDeleteAt = audioDeleteAt,
+                processingProgressPercent = null,
+                processingEtaMillis = null
             )
+        )
+    }
+
+    /**
+     * Live progress updates from [com.andrecord.app.workers.TranscriptionWorker]'s per-chunk
+     * transcription loop -- both are rough estimates (percent complete by chunk count, and an
+     * ETA extrapolated from the average time per chunk so far), not precise measurements. A no-op
+     * if the session has since been deleted or otherwise raced past PROCESSING.
+     */
+    suspend fun updateProcessingProgress(id: String, progressPercent: Int, etaMillis: Long?) {
+        val session = sessionDao.getById(id) ?: return
+        sessionDao.update(
+            session.copy(processingProgressPercent = progressPercent, processingEtaMillis = etaMillis)
         )
     }
 
     suspend fun finalizeReady(id: String, speakerCount: Int?) {
         val session = sessionDao.getById(id) ?: return
-        sessionDao.update(session.copy(status = SessionStatus.READY, speakerCount = speakerCount))
+        sessionDao.update(
+            session.copy(
+                status = SessionStatus.READY,
+                speakerCount = speakerCount,
+                processingProgressPercent = null,
+                processingEtaMillis = null
+            )
+        )
     }
 
     suspend fun markError(id: String, reason: String) {
@@ -124,7 +146,9 @@ class SessionRepository(
      */
     suspend fun markProcessingFailed(id: String) {
         val session = sessionDao.getById(id) ?: return
-        sessionDao.update(session.copy(status = SessionStatus.ERROR))
+        sessionDao.update(
+            session.copy(status = SessionStatus.ERROR, processingProgressPercent = null, processingEtaMillis = null)
+        )
     }
 
     /**
@@ -138,7 +162,9 @@ class SessionRepository(
         val session = sessionDao.getById(id) ?: return
         val wavFilePath = session.audioFilePath ?: return
         val durationMs = session.durationMs ?: return
-        sessionDao.update(session.copy(status = SessionStatus.PROCESSING))
+        sessionDao.update(
+            session.copy(status = SessionStatus.PROCESSING, processingProgressPercent = null, processingEtaMillis = null)
+        )
         transcriptionEnqueuer(id, wavFilePath, durationMs, session.startTime)
     }
 

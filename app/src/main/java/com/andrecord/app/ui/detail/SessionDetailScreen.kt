@@ -34,6 +34,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.andrecord.app.data.SessionStatus
 import com.andrecord.app.ui.components.SpeakerTimelineStrip
+import com.andrecord.app.ui.components.formatProcessingStatus
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -110,6 +111,11 @@ fun SessionDetailScreen(viewModel: SessionDetailViewModel, onDeleted: () -> Unit
                     Button(onClick = { viewModel.retry() }, modifier = Modifier.padding(vertical = 8.dp)) {
                         Text("Retry")
                     }
+                } else if (s.status == SessionStatus.PROCESSING) {
+                    Text(
+                        text = formatProcessingStatus(s.processingProgressPercent, s.processingEtaMillis),
+                        style = MaterialTheme.typography.labelSmall
+                    )
                 } else {
                     Text(text = "${s.durationMs?.div(60000) ?: 0} min · ${s.speakerCount ?: 0} speakers",
                         style = MaterialTheme.typography.labelSmall)
