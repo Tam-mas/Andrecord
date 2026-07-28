@@ -34,6 +34,8 @@ import kotlinx.coroutines.launch
 import java.io.File
 import java.util.concurrent.TimeUnit
 
+private const val CALENDAR_OBSERVER_DEBOUNCE_MILLIS = 500L
+
 class AppContainer(app: Application) {
     private val database = AndrecordDatabase.build(app)
 
@@ -105,13 +107,26 @@ class AndrecordApplication : Application(), Configuration.Provider {
     }
 
     /** Promptly re-scans when the calendar's underlying data changes (an event added, edited, or
-     *  deleted) rather than waiting for the next periodic safety-net run, up to 6 hours away. */
+     *  deleted) rather than waiting for the next periodic safety-net run, up to 6 hours away.
+     *  Debounced: a single calendar sync can touch many rows in quick succession (each one
+     *  triggering onChange independently, since notifyForDescendants=true), so a pending rescan is
+     *  cancelled and rescheduled rather than firing once per row. */
     private fun registerCalendarObserver() {
-        val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
+        val handler = Handler(Looper.getMainLooper())
+        var pendingRescan: Runnable? = null
+        val observer = object : ContentObserver(handler) {
             override fun onChange(selfChange: Boolean) {
-                container.calendarAutoRecordScheduler.rescan()
+                pendingRescan?.let { handler.removeCallbacks(it) }
+                val runnable = Runnable { container.calendarAutoRecordScheduler.rescanAsync() }
+                pendingRescan = runnable
+                handler.postDelayed(runnable, CALENDAR_OBSERVER_DEBOUNCE_MILLIS)
             }
         }
-        contentResolver.registerContentObserver(CalendarContract.CONTENT_URI, true, observer)
+        try {
+            contentResolver.registerContentObserver(CalendarContract.CONTENT_URI, true, observer)
+        } catch (e: Exception) {
+            // Best-effort: a failure to register here shouldn't fail app startup for every user;
+            // the periodic safety-net worker and boot receiver still keep the feature working.
+        }
     }
 }

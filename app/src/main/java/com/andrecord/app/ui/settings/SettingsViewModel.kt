@@ -1,14 +1,17 @@
 package com.andrecord.app.ui.settings
 
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
 import com.andrecord.app.calendar.CalendarAutoRecordScheduler
 import com.andrecord.app.calendar.CalendarEventRepository
 import com.andrecord.app.calendar.CalendarInfo
 import com.andrecord.app.calendar.ExactAlarmPermissionStatus
 import com.andrecord.app.settings.AppSettings
 import com.andrecord.app.settings.ReopenBehavior
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 
 class SettingsViewModel(
     private val appSettings: AppSettings,
@@ -36,14 +39,25 @@ class SettingsViewModel(
         _reopenBehavior.value = behavior
     }
 
-    /** Re-reads live state that can change outside this ViewModel: the device's synced calendar
-     *  list, and whether the exact-alarm permission is currently granted. Call on resume, since
-     *  the user's path here is granting the permission in system Settings and returning. */
+    /**
+     * Re-reads live state that can change outside this ViewModel: the device's synced calendar
+     * list, whether the exact-alarm permission is currently granted, and (per the design spec's
+     * setup flow) triggers a rescan so a permission grant made just before returning here -- e.g.
+     * the user grants the exact-alarm permission via the banner's deep link and comes back --
+     * takes effect immediately instead of waiting for the next periodic safety-net run. Call on
+     * resume and on first composition.
+     */
     fun refreshCalendarState() {
-        if (_calendarAutoRecordEnabled.value) {
-            _availableCalendars.value = calendarEventRepository.getWatchableCalendars()
-        }
         _showExactAlarmBanner.value = _calendarAutoRecordEnabled.value && exactAlarmPermissionStatus.shouldShowBanner()
+        if (_calendarAutoRecordEnabled.value) {
+            // getWatchableCalendars() is a blocking ContentResolver query; run it off the main
+            // thread rather than blocking the UI on every resume.
+            viewModelScope.launch(Dispatchers.IO) {
+                val calendars = calendarEventRepository.getWatchableCalendars()
+                _availableCalendars.value = calendars
+            }
+        }
+        calendarAutoRecordScheduler.rescanAsync()
     }
 
     /** Called once READ_CALENDAR has been granted (or immediately, when turning the feature
@@ -52,7 +66,6 @@ class SettingsViewModel(
         appSettings.setCalendarAutoRecordEnabled(enabled)
         _calendarAutoRecordEnabled.value = enabled
         refreshCalendarState()
-        calendarAutoRecordScheduler.rescan()
     }
 
     fun toggleWatchedCalendar(calendarId: Long) {
@@ -60,7 +73,7 @@ class SettingsViewModel(
         val updated = if (calendarId in current) current - calendarId else current + calendarId
         appSettings.setWatchedCalendarIds(updated)
         _watchedCalendarIds.value = updated
-        calendarAutoRecordScheduler.rescan()
+        calendarAutoRecordScheduler.rescanAsync()
     }
 
     fun dismissExactAlarmBanner() {

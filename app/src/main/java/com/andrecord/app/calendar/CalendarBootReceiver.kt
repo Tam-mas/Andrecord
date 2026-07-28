@@ -14,6 +14,6 @@ class CalendarBootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
         val container = (context.applicationContext as AndrecordApplication).container
-        container.calendarAutoRecordScheduler.rescan()
+        container.calendarAutoRecordScheduler.rescanAsync()
     }
 }
