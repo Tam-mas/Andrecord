@@ -27,13 +27,19 @@ class SessionRepository(
     var transcriptionEnqueuer: (sessionId: String, wavFilePath: String, durationMs: Long, startTime: Long) -> Unit =
         { _, _, _, _ -> }
 
-    suspend fun createSession(id: String, startTime: Long): Session {
+    /**
+     * [calendarName], when present, means this session was started by the calendar auto-record
+     * feature (see CalendarAlarmReceiver) rather than a manual trigger; it's appended to the
+     * title so a calendar-triggered session is distinguishable in the session list.
+     */
+    suspend fun createSession(id: String, startTime: Long, calendarName: String? = null): Session {
+        val baseTitle = titleFormat.format(Date(startTime))
         val session = Session(
             id = id,
             startTime = startTime,
             endTime = null,
             durationMs = null,
-            title = titleFormat.format(Date(startTime)),
+            title = if (calendarName != null) "$baseTitle — $calendarName" else baseTitle,
             status = SessionStatus.RECORDING,
             speakerCount = null,
             audioFilePath = null,

@@ -234,5 +234,27 @@ class SessionRepositoryTest {
         db.close()
     }
 
+    @Test
+    fun `createSession with a calendar name appends it to the title`() = runTest {
+        val (repo, db) = buildRepo()
+
+        repo.createSession("s1", startTime = 1000L, calendarName = "Work")
+
+        val title = db.sessionDao().getById("s1")?.title
+        assertTrue("Expected title to end with the calendar name, was: $title", title!!.endsWith("— Work"))
+        db.close()
+    }
+
+    @Test
+    fun `createSession without a calendar name keeps the plain title`() = runTest {
+        val (repo, db) = buildRepo()
+
+        repo.createSession("s1", startTime = 1000L)
+
+        val title = db.sessionDao().getById("s1")?.title
+        assertEquals(false, title!!.contains("—"))
+        db.close()
+    }
+
     private data class Quadruple(val sessionId: String, val wavFilePath: String, val durationMs: Long, val startTime: Long)
 }
